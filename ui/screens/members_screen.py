@@ -159,18 +159,16 @@ class MemberFormDialog(QDialog):
 
 class SaveMemberWorker(QThread):
     finished = pyqtSignal(bool, str)
-    def __init__(self, fb, db, member, user_email, photo_path=None):
+    def __init__(self, db, member, user_email, photo_path=None):
         super().__init__()
-        self.fb, self.db, self.member, self.user_email, self.photo_path = fb, db, member, user_email, photo_path
+        self.db, self.member, self.user_email, self.photo_path = db, member, user_email, photo_path
     def run(self):
         try:
             if self.photo_path:
-                remote = f"photos/{self.member.syncId or uuid.uuid4()}.jpg"
-                try:
-                    url = self.fb.upload_file(self.photo_path, remote)
-                    self.member.photoUri = url
-                except Exception:
-                    pass
+                from services.media_service import store_file
+                stored = store_file(self.photo_path, "photos")
+                if stored:
+                    self.member.photoUri = stored
             self.db.save_member(self.member)
             self.db.log_audit_local(self.user_email, "member_save", f"Member: {self.member.name} ({self.member.syncId})")
             self.finished.emit(True, "")
@@ -182,12 +180,10 @@ class MembersScreen(QWidget):
     TABLE_COLS = ["Member ID", "Name", "Email", "Phone", "Dept",
                   "Type", "Books Issued", "Expiry"]
 
-    def __init__(self, firebase_service, db_helper, auth_service, read_only=False):
+    def __init__(self, db_helper, auth_service):
         super().__init__()
-        self.fb = firebase_service
         self.db = db_helper
         self.auth = auth_service
-        self.read_only = read_only
         self._members = []
         self._listener = None
         
@@ -212,24 +208,23 @@ class MembersScreen(QWidget):
         title.setStyleSheet("font-size:22px;font-weight:800;color:#E8EEF8;font-family:'Segoe UI';")
         hdr.addWidget(title); hdr.addStretch()
         
-        if not self.read_only:
-            # Import / Export
-            self.imp_btn = QPushButton("📥 Import Documents")
-            self.exp_btn = QPushButton("📤 Export CSV")
-            for b in (self.imp_btn, self.exp_btn):
-                b.setStyleSheet("background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;border-radius:6px;padding:6px 12px;font-size:11px;")
-            self.imp_btn.clicked.connect(self._import_doc)
-            self.exp_btn.clicked.connect(self._export_csv)
-            hdr.addWidget(self.imp_btn)
-            hdr.addWidget(self.exp_btn)
+        # Import / Export
+        self.imp_btn = QPushButton("📥 Import Documents")
+        self.exp_btn = QPushButton("📤 Export CSV")
+        for b in (self.imp_btn, self.exp_btn):
+            b.setStyleSheet("background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;border-radius:6px;padding:6px 12px;font-size:11px;")
+        self.imp_btn.clicked.connect(self._import_doc)
+        self.exp_btn.clicked.connect(self._export_csv)
+        hdr.addWidget(self.imp_btn)
+        hdr.addWidget(self.exp_btn)
 
-            add_btn = QPushButton("➕  Add Member")
-            add_btn.setStyleSheet(
-                "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7C3AED,stop:1 #8B5CF6);"
-                "color:white;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;"
-            )
-            add_btn.clicked.connect(self._add_member)
-            hdr.addWidget(add_btn)
+        add_btn = QPushButton("➕  Add Member")
+        add_btn.setStyleSheet(
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #7C3AED,stop:1 #8B5CF6);"
+            "color:white;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;"
+        )
+        add_btn.clicked.connect(self._add_member)
+        hdr.addWidget(add_btn)
         layout.addLayout(hdr)
 
         # Search
@@ -281,55 +276,54 @@ class MembersScreen(QWidget):
         pag_row.addStretch()
         layout.addLayout(pag_row)
 
-        if not self.read_only:
-            action_row = QHBoxLayout(); action_row.addStretch()
-            self.edit_btn = QPushButton("✏️  Edit")
-            self.edit_btn.clicked.connect(self._edit_member)
-            self.del_btn  = QPushButton("🗑️  Delete")
-            self.del_btn.clicked.connect(self._delete_member)
-            self.pin_btn  = QPushButton("🔑  Reset PIN")
-            self.pin_btn.clicked.connect(self._reset_pin)
-            self.copy_pin_btn = QPushButton("📋  Copy PIN")
-            self.copy_pin_btn.clicked.connect(self._copy_pin)
-            self.hist_btn = QPushButton("📋  View History")
-            self.hist_btn.clicked.connect(self._view_history)
-            self.rec_btn = QPushButton("🧠 AI Recommend")
-            self.rec_btn.clicked.connect(self._ai_recommend)
-            self.idcard_btn = QPushButton("🪪 Print ID Card")
-            self.idcard_btn.clicked.connect(self._print_id_card_single)
-            self.overdue_btn = QPushButton("⏰ Overdue Check")
-            self.overdue_btn.clicked.connect(self._check_overdue)
-            self.ledger_btn = QPushButton("💰 Fines Ledger")
-            self.ledger_btn.clicked.connect(self._view_fines_ledger)
+        action_row = QHBoxLayout(); action_row.addStretch()
+        self.edit_btn = QPushButton("✏️  Edit")
+        self.edit_btn.clicked.connect(self._edit_member)
+        self.del_btn  = QPushButton("🗑️  Delete")
+        self.del_btn.clicked.connect(self._delete_member)
+        self.pin_btn  = QPushButton("🔑  Reset PIN")
+        self.pin_btn.clicked.connect(self._reset_pin)
+        self.copy_pin_btn = QPushButton("📋  Copy PIN")
+        self.copy_pin_btn.clicked.connect(self._copy_pin)
+        self.hist_btn = QPushButton("📋  View History")
+        self.hist_btn.clicked.connect(self._view_history)
+        self.rec_btn = QPushButton("🧠 AI Recommend")
+        self.rec_btn.clicked.connect(self._ai_recommend)
+        self.idcard_btn = QPushButton("🪪 Print ID Card")
+        self.idcard_btn.clicked.connect(self._print_id_card_single)
+        self.overdue_btn = QPushButton("⏰ Overdue Check")
+        self.overdue_btn.clicked.connect(self._check_overdue)
+        self.ledger_btn = QPushButton("💰 Fines Ledger")
+        self.ledger_btn.clicked.connect(self._view_fines_ledger)
 
-            for b in (self.edit_btn, self.del_btn, self.pin_btn, self.copy_pin_btn, self.hist_btn,
-                      self.rec_btn, self.idcard_btn, self.overdue_btn, self.ledger_btn):
-                b.setStyleSheet(
-                    "background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;"
-                    "border-radius:8px;padding:8px 14px;font-size:12px;"
-                )
-            self.del_btn.setStyleSheet(
-                "background:rgba(220,38,38,0.1);color:#F87171;"
-                "border:1px solid rgba(220,38,38,0.3);border-radius:8px;padding:8px 14px;font-size:12px;"
-            )
-            self.rec_btn.setStyleSheet(
-                "background:#7C3AED;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:bold;"
-            )
-            self.idcard_btn.setStyleSheet(
-                "background:#0891B2;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:bold;"
-            )
-            self.overdue_btn.setStyleSheet(
-                "background:rgba(217,119,6,0.15);color:#F59E0B;border:1px solid rgba(217,119,6,0.4);"
+        for b in (self.edit_btn, self.del_btn, self.pin_btn, self.copy_pin_btn, self.hist_btn,
+                  self.rec_btn, self.idcard_btn, self.overdue_btn, self.ledger_btn):
+            b.setStyleSheet(
+                "background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;"
                 "border-radius:8px;padding:8px 14px;font-size:12px;"
             )
-            self.ledger_btn.setStyleSheet(
-                "background:rgba(16,185,129,0.15);color:#10B981;border:1px solid rgba(16,185,129,0.4);"
-                "border-radius:8px;padding:8px 14px;font-size:12px;font-weight:bold;"
-            )
-            for b in (self.edit_btn, self.del_btn, self.pin_btn, self.copy_pin_btn, self.hist_btn,
-                      self.rec_btn, self.idcard_btn, self.overdue_btn, self.ledger_btn):
-                action_row.addWidget(b)
-            layout.addLayout(action_row)
+        self.del_btn.setStyleSheet(
+            "background:rgba(220,38,38,0.1);color:#F87171;"
+            "border:1px solid rgba(220,38,38,0.3);border-radius:8px;padding:8px 14px;font-size:12px;"
+        )
+        self.rec_btn.setStyleSheet(
+            "background:#7C3AED;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:bold;"
+        )
+        self.idcard_btn.setStyleSheet(
+            "background:#0891B2;color:white;border:none;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:bold;"
+        )
+        self.overdue_btn.setStyleSheet(
+            "background:rgba(217,119,6,0.15);color:#F59E0B;border:1px solid rgba(217,119,6,0.4);"
+            "border-radius:8px;padding:8px 14px;font-size:12px;"
+        )
+        self.ledger_btn.setStyleSheet(
+            "background:rgba(16,185,129,0.15);color:#10B981;border:1px solid rgba(16,185,129,0.4);"
+            "border-radius:8px;padding:8px 14px;font-size:12px;font-weight:bold;"
+        )
+        for b in (self.edit_btn, self.del_btn, self.pin_btn, self.copy_pin_btn, self.hist_btn,
+                  self.rec_btn, self.idcard_btn, self.overdue_btn, self.ledger_btn):
+            action_row.addWidget(b)
+        layout.addLayout(action_row)
 
     def refresh(self):
         self.current_page = 0
@@ -401,11 +395,11 @@ class MembersScreen(QWidget):
 
     def _save_member(self, member, photo_path):
         user_email = self.auth.current_user.email if self.auth.current_user else ""
-        self._worker = SaveMemberWorker(self.fb, self.db, member, user_email, photo_path)
+        self._worker = SaveMemberWorker(self.db, member, user_email, photo_path)
 
         def _on_finished(ok, err):
             if ok:
-                QMessageBox.information(self, "Saved", "Member saved locally and queued for synchronization!")
+                QMessageBox.information(self, "Saved", "Member saved successfully.")
                 self.refresh()
             else:
                 QMessageBox.warning(self, "Error", err)
@@ -437,7 +431,7 @@ class MembersScreen(QWidget):
         if not m:
             QMessageBox.information(self, "Select", "Please select a member."); return
         reply = QMessageBox.question(self, "Delete",
-                                     f"Delete member '{m.name}'?\nThis will update it locally and sync deletes to cloud.",
+                                     f"Delete member '{m.name}'?",
                                      QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             m.deleted = True
@@ -462,7 +456,7 @@ class MembersScreen(QWidget):
             self.db.save_member(m)
             user_email = self.auth.current_user.email if self.auth.current_user else ""
             self.db.log_audit_local(user_email, "member_pin_reset", f"MemberSyncId: {m.syncId}")
-            QMessageBox.information(self, "Done", f"PIN reset locally for {m.name} and queued for sync.")
+            QMessageBox.information(self, "Done", f"PIN reset for {m.name}.")
             self.refresh()
 
     def _copy_pin(self):
@@ -562,11 +556,10 @@ class MembersScreen(QWidget):
                 f"{m.name} has no overdue books."
             )
         else:
-            fine_rate = 5  # Rs/day fallback
             try:
-                fine_rate = self.fb.get_fine_rate()
+                fine_rate = self.db.get_fine_rate()
             except Exception:
-                pass
+                fine_rate = 5  # Rs/day fallback
             msg = f"<b>{m.name}</b> has <b>{len(issues)}</b> overdue book(s):<br><br>"
             total_fine = 0.0
             for i in issues:

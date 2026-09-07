@@ -19,19 +19,17 @@ from services.advanced_service import AdvancedService
 
 class ReportWorker(QThread):
     finished = pyqtSignal(bool, str)
-    def __init__(self, fb, db, report_type, path):
+    def __init__(self, db, report_type, path):
         super().__init__()
-        self.fb = fb
         self.db = db
         self.report_type = report_type
         self.path = path
 
     def run(self):
         try:
-            stats = self.fb.get_statistics() if not self.fb.mock_mode else {}
-            if not stats:
-                stats = self._compute_local_stats()
-            rs = ReportService()
+            stats = self._compute_local_stats()
+            profile = self.db.get_school_profile()
+            rs = ReportService(profile.get("name", "School Library"), profile.get("address", ""))
             if self.report_type == "stats":
                 rs.generate_stats_report(stats, self.path)
             elif self.report_type == "director":
@@ -98,9 +96,8 @@ class ReportWorker(QThread):
 
 
 class ReportsScreen(QWidget):
-    def __init__(self, firebase_service, db_helper, auth_service):
+    def __init__(self, db_helper, auth_service):
         super().__init__()
-        self.fb = firebase_service
         self.db = db_helper
         self.auth = auth_service
         self.adv = AdvancedService(db_helper)
@@ -208,7 +205,7 @@ class ReportsScreen(QWidget):
 
         dir_card = self._make_card(
             "\U0001f3af", "Director Pitch Summary",
-            "Polished letterhead report specifically formatted for HEC / Directorate of Archives.",
+            "Polished letterhead summary report for the school head or administration.",
             "Generate Pitch PDF", self._gen_director,
             color="#C8A84B"
         )
@@ -437,7 +434,7 @@ class ReportsScreen(QWidget):
             story = []
             story.append(Paragraph(f"LEADERBOARD: {kind.upper()}", ParagraphStyle(
                 "h", fontSize=18, fontName="Helvetica-Bold", textColor=dark, alignment=TA_CENTER)))
-            story.append(Paragraph(f"GDC Library50  \u2022  Generated: {time.strftime('%B %d, %Y')}",
+            story.append(Paragraph(f"{self.db.get_school_name()}  \u2022  Generated: {time.strftime('%B %d, %Y')}",
                 ParagraphStyle("sub", fontSize=10, textColor=colors.grey, alignment=TA_CENTER)))
             story.append(Spacer(1, 0.3*cm))
             story.append(HRFlowable(width="100%", thickness=2, color=gold))
@@ -548,7 +545,7 @@ class ReportsScreen(QWidget):
 
                 # Feature 6.7: Auto-filled polite message
                 msg = (
-                    f"Dear {issue.memberName}, this is a friendly reminder from GDC Library. "
+                    f"Dear {issue.memberName}, this is a friendly reminder from {self.db.get_school_name()}. "
                     f"'{issue.bookTitle}' was due on {issue.dueDate} and is now {days} day(s) overdue. "
                     f"Please return it at your earliest convenience to avoid further fines. Thank you!"
                 )
@@ -576,7 +573,7 @@ class ReportsScreen(QWidget):
     # ── Feature 6.8: Full PDF Analytics Report ───────────────────────────────
     def _gen_full_analytics(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save Full Analytics Report",
-                                               "GDC_Full_Analytics_Report.pdf", "PDF Files (*.pdf)")
+                                               "Full_Analytics_Report.pdf", "PDF Files (*.pdf)")
         if not path: return
         self._gen_report("full_analytics", path)
 
@@ -587,7 +584,7 @@ class ReportsScreen(QWidget):
         self._gen_report("stats", path)
 
     def _gen_director(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Save PDF Report", "GDC_Director_Summary.pdf", "PDF Files (*.pdf)")
+        path, _ = QFileDialog.getSaveFileName(self, "Save PDF Report", "Administrative_Summary_Report.pdf", "PDF Files (*.pdf)")
         if not path: return
         self._gen_report("director", path)
 
@@ -597,11 +594,10 @@ class ReportsScreen(QWidget):
         self.progress.setRange(0, 0); self.progress.show()
         try:
             issues = self.db.get_issues()
-            fine_rate = 5.0
             try:
-                fine_rate = self.fb.get_fine_rate()
+                fine_rate = self.db.get_fine_rate()
             except Exception:
-                pass
+                fine_rate = 5.0
             self.adv.generate_overdue_report(issues, fine_rate, path)
             self.progress.hide()
             reply = QMessageBox.information(self, "Success", f"Overdue report saved to:\n{path}\n\nOpen it now?",
@@ -635,7 +631,7 @@ class ReportsScreen(QWidget):
 
     def _gen_report(self, r_type, default_name):
         self.progress.setRange(0, 0); self.progress.show()
-        self.worker = ReportWorker(self.fb, self.db, r_type, default_name)
+        self.worker = ReportWorker(self.db, r_type, default_name)
         self.worker.finished.connect(self._on_done)
         self.worker.start()
 

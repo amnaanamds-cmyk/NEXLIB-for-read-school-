@@ -1,9 +1,7 @@
 PyQt6
-firebase-admin
 reportlab
 python-dotenv
 requests
-keyring
 matplotlib
 pandas
 openpyxl
@@ -11,4 +9,3 @@ Pillow
 python-barcode
 qrcode
 pymarc
-google-genai

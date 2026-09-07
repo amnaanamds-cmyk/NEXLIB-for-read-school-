@@ -31,6 +31,9 @@ class AdvancedService:
     def __init__(self, db_helper: DatabaseHelper):
         self.db = db_helper
 
+    def _school_name(self) -> str:
+        return self.db.get_school_name()
+
     # ─── Bulk Import: Books (CSV, Excel, JSON) ───────────────────────────────
     def import_books(self, file_path: str) -> Tuple[int, int, List[str]]:
         """
@@ -505,7 +508,7 @@ class AdvancedService:
         row_pair = []
 
         for m in members:
-            header = Table([[Paragraph("GDC LIBRARY CARD", hdr_style)]], colWidths=[80*mm])
+            header = Table([[Paragraph(f"{self._school_name().upper()} LIBRARY CARD", hdr_style)]], colWidths=[80*mm])
             header.setStyle(TableStyle([
                 ("BACKGROUND", (0,0), (-1,-1), dark),
                 ("PADDING", (0,0), (-1,-1), 4),
@@ -578,7 +581,7 @@ class AdvancedService:
                                 leftMargin=1.5*cm, rightMargin=1.5*cm)
         story = []
 
-        story.append(Paragraph("GDC Library50", ParagraphStyle(
+        story.append(Paragraph(self._school_name(), ParagraphStyle(
             "h", fontName="Helvetica-Bold", fontSize=14, textColor=dark, alignment=TA_CENTER)))
         story.append(Paragraph("Return / Fine Receipt", ParagraphStyle(
             "sub", fontName="Helvetica", fontSize=9, textColor=colors.grey, alignment=TA_CENTER)))
@@ -618,7 +621,7 @@ class AdvancedService:
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
         story.append(Spacer(1, 0.2*cm))
         story.append(Paragraph(
-            f"Receipt generated: {time.strftime('%Y-%m-%d %H:%M:%S')}  —  GDC Library50",
+            f"Receipt generated: {time.strftime('%Y-%m-%d %H:%M:%S')}  —  {self._school_name()}",
             ParagraphStyle("foot", fontName="Helvetica", fontSize=7,
                            textColor=colors.grey, alignment=TA_CENTER)))
         doc.build(story)
@@ -645,7 +648,7 @@ class AdvancedService:
                                 leftMargin=1.5*cm, rightMargin=1.5*cm)
         story = []
 
-        story.append(Paragraph("GDC Library50", ParagraphStyle(
+        story.append(Paragraph(self._school_name(), ParagraphStyle(
             "h", fontName="Helvetica-Bold", fontSize=14, textColor=dark, alignment=TA_CENTER)))
         story.append(Paragraph("Issue Slip", ParagraphStyle(
             "sub", fontName="Helvetica", fontSize=9, textColor=colors.grey, alignment=TA_CENTER)))
@@ -681,7 +684,7 @@ class AdvancedService:
         story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
         story.append(Spacer(1, 0.2*cm))
         story.append(Paragraph(
-            f"Slip generated: {time.strftime('%Y-%m-%d %H:%M:%S')}  —  GDC Library50",
+            f"Slip generated: {time.strftime('%Y-%m-%d %H:%M:%S')}  —  {self._school_name()}",
             ParagraphStyle("foot", fontName="Helvetica", fontSize=7,
                            textColor=colors.grey, alignment=TA_CENTER)))
         doc.build(story)
@@ -727,7 +730,7 @@ class AdvancedService:
         story.append(Paragraph("OVERDUE BOOKS REPORT", ParagraphStyle(
             "h", fontName="Helvetica-Bold", fontSize=16, textColor=dark, alignment=TA_CENTER)))
         story.append(Paragraph(
-            f"GDC Library50  •  Generated: {time.strftime('%Y-%m-%d %H:%M')}  •  Fine Rate: Rs.{fine_rate}/day",
+            f"{self._school_name()}  •  Generated: {time.strftime('%Y-%m-%d %H:%M')}  •  Fine Rate: Rs.{fine_rate}/day",
             ParagraphStyle("sub", fontName="Helvetica", fontSize=9,
                            textColor=colors.grey, alignment=TA_CENTER)))
         story.append(Spacer(1, 0.3*cm))

@@ -1,6 +1,6 @@
 @echo off
 echo ========================================================
-echo   GDC Library50 Enterprise Edition - Windows Builder
+echo   NexLib - Windows Builder
 echo ========================================================
 echo.
 echo Installing PyInstaller and dependencies...
@@ -8,7 +8,7 @@ pip install -r requirements.txt
 pip install pyinstaller
 echo.
 echo Building the executable...
-python -m PyInstaller --noconfirm --clean gdc_desktop.spec
+python -m PyInstaller --noconfirm --clean --name NexLib --icon assets\nexlib.ico --windowed main.py
 echo.
 echo ========================================================
 echo   Build Complete!

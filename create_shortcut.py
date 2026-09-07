@@ -12,10 +12,10 @@ def create_shortcut():
         from win32com.client import Dispatch
 
     desktop = winshell.desktop()
-    path = os.path.join(desktop, "GDC Library50.lnk")
+    path = os.path.join(desktop, "NexLib.lnk")
     target = sys.executable.replace("python.exe", "pythonw.exe")
     wdir = os.getcwd()
-    icon = os.path.join(wdir, "assets", "gdc_library.ico")
+    icon = os.path.join(wdir, "assets", "nexlib.ico")
     arguments = os.path.join(wdir, "launch_app.pyw")
 
     shell = Dispatch('WScript.Shell')

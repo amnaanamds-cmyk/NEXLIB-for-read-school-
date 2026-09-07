@@ -1,7 +1,7 @@
 """
 services/database_helper.py — SQLite Local Database Service.
-Provides full offline caching of Books, Members, Issue Records, and Reservations.
-Tracks pending local changes using a sync_state table for reliable online/offline synchronization.
+Fully offline storage for Books, Members, Issue Records, Reservations,
+staff accounts, and the school profile.
 """
 import sqlite3
 import time
@@ -161,38 +161,6 @@ class DatabaseHelper:
                 )
             """)
 
-            # ── Sync Queue Table (Tracks dirty/pending records for push to cloud) ──
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS sync_queue (
-                    entityType TEXT, -- 'books', 'members', 'issued_books', 'reservations'
-                    syncId TEXT,
-                    action TEXT,     -- 'upsert', 'delete'
-                    timestamp INTEGER,
-                    PRIMARY KEY (entityType, syncId)
-                )
-            """)
-
-            # ── Sync Conflicts Table ──
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS sync_conflicts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    entityType TEXT,
-                    syncId TEXT,
-                    localValue TEXT,
-                    remoteValue TEXT,
-                    timestamp INTEGER,
-                    resolved INTEGER DEFAULT 0
-                )
-            """)
-
-            # ── Sync Metadata ──
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS sync_metadata (
-                    key TEXT PRIMARY KEY,
-                    val TEXT
-                )
-            """)
-
             # ── Book Reviews & Ratings ──
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS book_reviews (
@@ -206,35 +174,24 @@ class DatabaseHelper:
                 )
             """)
 
-            # ── Directorate Sync Queue ──
+            # ── School Profile (single-school key/value settings) ──
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS directorate_sync_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    payload TEXT NOT NULL,  -- JSON snapshot
-                    queued_at INTEGER NOT NULL
-                )
-            """)
-
-            # ── College Registration ──
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS college_registration (
+                CREATE TABLE IF NOT EXISTS school_profile (
                     key TEXT PRIMARY KEY,
                     val TEXT
                 )
             """)
 
-            # ── Book Transfers (local tracking) ──
+            # ── Staff Accounts (local authentication) ──
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS book_transfers (
+                CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    transfer_id INTEGER,  -- remote ID from central server
-                    from_college TEXT,
-                    to_college TEXT,
-                    book_title TEXT,
-                    book_isbn TEXT,
-                    status TEXT DEFAULT 'requested',
-                    requested_at INTEGER,
-                    updated_at INTEGER
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    name TEXT,
+                    role TEXT NOT NULL DEFAULT 'librarian',
+                    created_at INTEGER
                 )
             """)
 
@@ -320,16 +277,6 @@ class DatabaseHelper:
 
             conn.commit()
 
-    # ── Queue Helper ─────────────────────────────────────────────────────────
-    def _queue_sync(self, conn, entity_type: str, sync_id: str, action: str):
-        conn.execute("""
-            INSERT INTO sync_queue (entityType, syncId, action, timestamp)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(entityType, syncId) DO UPDATE SET
-                action = excluded.action,
-                timestamp = excluded.timestamp
-        """, (entity_type, sync_id, action, int(time.time() * 1000)))
-
     # ── Local Books Operations ───────────────────────────────────────────────
     def get_books(self, include_deleted=False) -> List[Book]:
         query = "SELECT * FROM books" if include_deleted else "SELECT * FROM books WHERE deleted = 0"
@@ -374,8 +321,8 @@ class DatabaseHelper:
             rows = conn.execute(query, params).fetchall()
             return [Book.from_dict(dict(r)) for r in rows], total_count
 
-    def save_book(self, book: Book, is_clean=False):
-        """Save book locally. Mark as dirty if not coming from cloud sync."""
+    def save_book(self, book: Book):
+        """Save (insert or update) a book locally."""
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO books (
@@ -399,8 +346,6 @@ class DatabaseHelper:
                 1 if book.isDigital else 0, book.digitalUrl, book.category,
                 book.lastUpdated, 1 if book.deleted else 0
             ))
-            if not is_clean:
-                self._queue_sync(conn, "books", book.syncId, "upsert")
             conn.commit()
 
     # ── Local Members Operations ─────────────────────────────────────────────
@@ -417,7 +362,7 @@ class DatabaseHelper:
             rows = conn.execute(query, (limit, offset)).fetchall()
             return [Member.from_dict(dict(r)) for r in rows]
 
-    def save_member(self, member: Member, is_clean=False):
+    def save_member(self, member: Member):
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO members (
@@ -441,8 +386,6 @@ class DatabaseHelper:
                 member.classNo, member.address, member.photoUri, member.designation,
                 member.bps, member.pin, member.lastUpdated, 1 if member.deleted else 0
             ))
-            if not is_clean:
-                self._queue_sync(conn, "members", member.syncId, "upsert")
             conn.commit()
 
     # ── Local Issue Records Operations ───────────────────────────────────────
@@ -452,7 +395,7 @@ class DatabaseHelper:
             rows = conn.execute(query).fetchall()
             return [IssueRecord.from_dict(dict(r)) for r in rows]
 
-    def save_issue(self, record: IssueRecord, is_clean=False):
+    def save_issue(self, record: IssueRecord):
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO issued_books (
@@ -471,8 +414,6 @@ class DatabaseHelper:
                 record.dueDate, record.returnDate, record.fine, record.status, record.lastUpdated,
                 1 if record.deleted else 0
             ))
-            if not is_clean:
-                self._queue_sync(conn, "issued_books", record.syncId, "upsert")
             conn.commit()
 
     # ── Local Reservations Operations ────────────────────────────────────────
@@ -482,7 +423,7 @@ class DatabaseHelper:
             rows = conn.execute(query).fetchall()
             return [Reservation.from_dict(dict(r)) for r in rows]
 
-    def save_reservation(self, res: Reservation, is_clean=False):
+    def save_reservation(self, res: Reservation):
         with self._get_conn() as conn:
             conn.execute("""
                 INSERT INTO reservations (
@@ -498,19 +439,6 @@ class DatabaseHelper:
                 res.syncId, res.id, res.bookId, res.bookTitle, res.memberId, res.memberName,
                 res.reservedDate, res.status, res.notifiedDate, res.lastUpdated, 1 if res.deleted else 0
             ))
-            if not is_clean:
-                self._queue_sync(conn, "reservations", res.syncId, "upsert")
-            conn.commit()
-
-    # ── Sync Queue Fetch & Remove ────────────────────────────────────────────
-    def get_pending_sync(self) -> List[Dict[str, Any]]:
-        with self._get_conn() as conn:
-            rows = conn.execute("SELECT * FROM sync_queue ORDER BY timestamp ASC").fetchall()
-            return [dict(r) for r in rows]
-
-    def remove_from_sync_queue(self, entity_type: str, sync_id: str):
-        with self._get_conn() as conn:
-            conn.execute("DELETE FROM sync_queue WHERE entityType = ? AND syncId = ?", (entity_type, sync_id))
             conn.commit()
 
     # ── Audit Log ─────────────────────────────────────────────────────────────
@@ -528,40 +456,6 @@ class DatabaseHelper:
         with self._get_conn() as conn:
             rows = conn.execute("SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?", (limit,)).fetchall()
             return [dict(r) for r in rows]
-
-    # ── Sync Conflicts ────────────────────────────────────────────────────────
-    def log_conflict(self, entity_type: str, sync_id: str, local_val: dict, remote_val: dict):
-        import json
-        with self._get_conn() as conn:
-            conn.execute("""
-                INSERT INTO sync_conflicts (entityType, syncId, localValue, remoteValue, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            """, (entity_type, sync_id, json.dumps(local_val), json.dumps(remote_val), int(time.time() * 1000)))
-            conn.commit()
-
-    def get_unresolved_conflicts(self) -> List[Dict[str, Any]]:
-        with self._get_conn() as conn:
-            rows = conn.execute("SELECT * FROM sync_conflicts WHERE resolved = 0 ORDER BY timestamp DESC").fetchall()
-            return [dict(r) for r in rows]
-
-    def resolve_conflict(self, conflict_id: int):
-        with self._get_conn() as conn:
-            conn.execute("UPDATE sync_conflicts SET resolved = 1 WHERE id = ?", (conflict_id,))
-            conn.commit()
-
-    # ── Sync Last Pull Timestamp ─────────────────────────────────────────────
-    def get_last_sync_timestamp(self, entity: str) -> int:
-        with self._get_conn() as conn:
-            row = conn.execute("SELECT val FROM sync_metadata WHERE key = ?", (f"last_sync_{entity}",)).fetchone()
-            return int(row["val"]) if row else 0
-
-    def set_last_sync_timestamp(self, entity: str, ts: int):
-        with self._get_conn() as conn:
-            conn.execute("""
-                INSERT INTO sync_metadata (key, val) VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET val = excluded.val
-            """, (f"last_sync_{entity}", str(ts)))
-            conn.commit()
 
     # ── Book Reviews & Ratings ──
     def save_review(self, book_sync_id: str, member_sync_id: str, member_name: str, rating: int, comment: str):
@@ -582,75 +476,73 @@ class DatabaseHelper:
             row = conn.execute("SELECT AVG(rating) as avg_rating FROM book_reviews WHERE bookSyncId = ?", (book_sync_id,)).fetchone()
             return row["avg_rating"] if row and row["avg_rating"] else 0.0
 
-    # ── Directorate Sync Queue ─────────────────────────────────────────────────
-    def queue_directorate_snapshot(self, payload: dict):
-        import json
+    # ── School Profile ───────────────────────────────────────────────────────
+    def get_school_profile(self) -> Dict[str, str]:
         with self._get_conn() as conn:
-            conn.execute(
-                "INSERT INTO directorate_sync_queue (payload, queued_at) VALUES (?, ?)",
-                (json.dumps(payload), int(time.time() * 1000))
-            )
-            conn.commit()
-
-    def get_pending_directorate_syncs(self) -> List[Dict[str, Any]]:
-        with self._get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM directorate_sync_queue ORDER BY queued_at ASC"
-            ).fetchall()
-            return [dict(r) for r in rows]
-
-    def remove_directorate_sync(self, record_id: int):
-        with self._get_conn() as conn:
-            conn.execute("DELETE FROM directorate_sync_queue WHERE id = ?", (record_id,))
-            conn.commit()
-
-    # ── College Registration ────────────────────────────────────────────────────
-    def get_college_registration(self) -> Dict[str, str]:
-        with self._get_conn() as conn:
-            rows = conn.execute("SELECT * FROM college_registration").fetchall()
+            rows = conn.execute("SELECT * FROM school_profile").fetchall()
             return {r['key']: r['val'] for r in rows}
 
-    def set_college_registration(self, key: str, val: str):
+    def set_school_profile(self, key: str, val: str):
         with self._get_conn() as conn:
             conn.execute("""
-                INSERT INTO college_registration (key, val) VALUES (?, ?)
+                INSERT INTO school_profile (key, val) VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET val = excluded.val
             """, (key, val))
             conn.commit()
 
-    # ── Compute Snapshot for Directorate Sync ──────────────────────────────────
-    def compute_snapshot(self) -> dict:
-        """Build a stats snapshot of this college for push to the central directorate server."""
-        books = self.get_books()
-        members = self.get_members()
-        issues = self.get_issues()
-        today = time.strftime("%Y-%m-%d")
+    def get_school_name(self) -> str:
+        return self.get_school_profile().get("name") or "School Library"
 
-        total_books = len(books)
-        available_books = sum(1 for b in books if b.status == "Available")
-        issued_books = sum(1 for b in books if b.status == "Issued")
-        overdue_count = sum(1 for i in issues if i.status == "Issued" and i.dueDate and i.dueDate < today)
-        total_fines = sum(i.fine for i in issues if i.status == "Returned" and i.fine > 0)
+    def get_fine_rate(self) -> float:
+        val = self.get_school_profile().get("fine_rate_per_day")
+        return float(val) if val else config.DEFAULT_FINE_RATE
 
-        # Top borrowed books
-        from collections import Counter
-        title_counts = Counter(i.bookTitle for i in issues)
-        top_borrowed = [{"title": t, "count": c} for t, c in title_counts.most_common(5)]
+    def set_fine_rate(self, rate: float):
+        self.set_school_profile("fine_rate_per_day", str(rate))
 
-        # Activity summary (last 10 audit entries)
-        logs = self.get_audit_logs_local(10)
-        activity_summary = [f"{l.get('action','')} — {l.get('detail','')}" for l in logs]
+    # ── Staff Accounts (local authentication) ───────────────────────────────
+    def create_user(self, username: str, password_hash: str, salt: str, name: str, role: str):
+        with self._get_conn() as conn:
+            conn.execute("""
+                INSERT INTO users (username, password_hash, salt, name, role, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (username, password_hash, salt, name, role, int(time.time() * 1000)))
+            conn.commit()
 
-        return {
-            "total_books": total_books,
-            "available_books": available_books,
-            "issued_books": issued_books,
-            "total_members": len(members),
-            "overdue_count": overdue_count,
-            "total_fines": total_fines,
-            "top_borrowed_books": top_borrowed,
-            "activity_summary": activity_summary
-        }
+    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def count_users(self) -> int:
+        with self._get_conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def list_users(self) -> List[Dict[str, Any]]:
+        with self._get_conn() as conn:
+            rows = conn.execute("SELECT id, username, name, role, created_at FROM users ORDER BY username").fetchall()
+            return [dict(r) for r in rows]
+
+    def update_user_password(self, user_id: int, password_hash: str, salt: str):
+        with self._get_conn() as conn:
+            conn.execute("UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+                        (password_hash, salt, user_id))
+            conn.commit()
+
+    def update_user_role(self, user_id: int, role: str):
+        with self._get_conn() as conn:
+            conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+            conn.commit()
+
+    def delete_user(self, user_id: int):
+        with self._get_conn() as conn:
+            conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
 
     # ── Backup History ─────────────────────────────────────────────────────────
     def log_backup(self, backup_path: str, backup_type: str, file_size: int):

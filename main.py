@@ -1,7 +1,8 @@
 """
-main.py — Main entry point for the GDC Library50 Desktop Application.
-Initializes PyQt6, loads the font, connects Firebase, starts sync engine,
-and handles routing between Login and MainWindow.
+main.py — Main entry point for the NexLib Desktop Application.
+Fully offline: local SQLite only, no network calls. On first run it shows a
+one-time setup wizard to create the school profile and the first
+administrator account, then routes between Login and MainWindow.
 """
 import sys
 import traceback
@@ -12,12 +13,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QFontDatabase, QFont
 
 import config
-from services.firebase_service import FirebaseService
 from services.database_helper import DatabaseHelper
-from services.sync_service import SyncService
-from services.directorate_sync_service import DirectorateSyncService
 from services.auth_service import AuthService
+from services.backup_service import BackupService
 from ui.login_screen import LoginScreen
+from ui.setup_wizard import SetupWizard
 from ui.main_window import MainWindow
 
 # Configure global logging
@@ -25,7 +25,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("gdc_library.log", encoding="utf-8"),
+        logging.FileHandler("nexlib.log", encoding="utf-8"),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Feature: Force taskbar icon to show (AppUserModelID)
 if sys.platform == 'win32':
-    myappid = f"gdc.library50.management.v{config.APP_VERSION}"
+    myappid = f"nexlib.desktop.v{config.APP_VERSION}"
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 def _global_exception_handler(exc_type, exc_value, exc_tb):
@@ -59,7 +59,7 @@ class LibraryApp(QApplication):
         super().__init__(argv)
         self.setApplicationName(config.APP_NAME)
         self.setApplicationVersion(config.APP_VERSION)
-        
+
         font = QFont("Segoe UI", 10)
         self.setFont(font)
 
@@ -70,48 +70,53 @@ class LibraryApp(QApplication):
         except Exception as e:
             logger.warning(f"Failed to load stylesheet: {e}")
 
-        # Set Application Icon (Feature Part B)
-        self.setWindowIcon(QIcon("assets/gdc_library.ico"))
+        # Set Application Icon
+        self.setWindowIcon(QIcon("assets/nexlib.ico"))
 
-        # Initialize Services
+        # Initialize local services (no network access anywhere)
         self.db_helper = DatabaseHelper()
-        try:
-            self.fb_service = FirebaseService()
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase: {e}", exc_info=True)
-            sys.exit(1)
-            
-        self.auth_service = AuthService(self.fb_service)
-        
-        # Setup sync service (background thread)
-        self.sync_service = SyncService(self.db_helper, self.fb_service)
-        self.directorate_sync = DirectorateSyncService(self.db_helper)
+        self.auth_service = AuthService(self.db_helper)
 
-        # Setup main router (QStackedWidget)
+        # Automated daily local backups
+        self.backup_service = BackupService(self.db_helper)
+        self.backup_service.start()
+
+        # Setup main router (QStackedWidget) — a single application window
         self.router = QStackedWidget()
-        self.router.setWindowTitle(f"{config.APP_NAME} — {config.APP_ORG}")
+        self.router.setWindowTitle(f"{self.db_helper.get_school_name()} — {config.APP_NAME}")
         self.router.setMinimumSize(1024, 768)
 
-        # 1. Login Screen
-        self.login_screen = LoginScreen(self.auth_service)
-        self.login_screen.login_success.connect(self._on_login_success)
-        self.router.addWidget(self.login_screen)
+        if self.auth_service.has_any_accounts():
+            self._show_login()
+        else:
+            self._show_setup_wizard()
 
         self.router.show()
-        self.login_screen.try_auto_login()
+
+    def _show_setup_wizard(self):
+        self.setup_wizard = SetupWizard(self.db_helper, self.auth_service)
+        self.setup_wizard.setup_complete.connect(self._on_setup_complete)
+        self.router.addWidget(self.setup_wizard)
+        self.router.setCurrentWidget(self.setup_wizard)
+
+    def _on_setup_complete(self):
+        self.router.setWindowTitle(f"{self.db_helper.get_school_name()} — {config.APP_NAME}")
+        self._show_login()
+        self.router.removeWidget(self.setup_wizard)
+        self.setup_wizard.deleteLater()
+        self.setup_wizard = None
+
+    def _show_login(self):
+        self.login_screen = LoginScreen(self.auth_service, self.db_helper)
+        self.login_screen.login_success.connect(self._on_login_success)
+        self.router.addWidget(self.login_screen)
+        self.router.setCurrentWidget(self.login_screen)
 
     def _on_login_success(self, role: str):
         try:
-            # Start Sync Service
-            if not self.sync_service.isRunning():
-                self.sync_service.start()
-            if not self.directorate_sync.isRunning():
-                self.directorate_sync.start()
-
-            # 2. Main Window
-            self.main_window = MainWindow(self.auth_service, self.fb_service, self.db_helper, self.sync_service, self.directorate_sync)
+            self.main_window = MainWindow(self.auth_service, self.db_helper)
             self.main_window.logout_requested.connect(self._on_logout)
-            
+
             self.router.addWidget(self.main_window)
             self.router.setCurrentWidget(self.main_window)
             self.router.resize(1366, 800)
@@ -122,8 +127,6 @@ class LibraryApp(QApplication):
                 "Login Error",
                 f"Failed to open the main window:\n\n{e}"
             )
-
-
 
     def _on_logout(self):
         # Remove main window and go back to login

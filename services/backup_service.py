@@ -1,8 +1,8 @@
 """
 services/backup_service.py
-Automated Backup & Restore for GDC Library50 Desktop.
+Automated Backup & Restore for NexLib Desktop.
 Schedules daily SQLite backups, provides manual backup/restore,
-and full ZIP migration export for college-to-directorate transfers.
+and a full ZIP export for archiving or moving to another machine.
 """
 import os
 import shutil
@@ -17,7 +17,7 @@ import config
 from services.database_helper import DatabaseHelper
 
 
-BACKUP_DIR = Path.home() / "GDCLibrary50" / "backups"
+BACKUP_DIR = Path(config.LOCAL_DB_PATH).parent / "backups"
 MAX_BACKUPS = 30  # Keep last 30 days
 BACKUP_INTERVAL_SECONDS = 86400  # 24 hours
 
@@ -62,7 +62,7 @@ class BackupService(QThread):
             raise FileNotFoundError(f"Database file not found: {src}")
 
         ts_str = time.strftime("%Y%m%d_%H%M%S")
-        backup_name = f"gdc_library_{ts_str}_{backup_type}.db"
+        backup_name = f"library_{ts_str}_{backup_type}.db"
         dest = BACKUP_DIR / backup_name
 
         shutil.copy2(str(src), str(dest))
@@ -95,8 +95,7 @@ class BackupService(QThread):
                 os.remove(safety_path)
 
     def export_full_backup_zip(self, output_path: str) -> str:
-        """Export full backup ZIP (DB + metadata) for migration to Directorate."""
-        ts_str = time.strftime("%Y%m%d_%H%M%S")
+        """Export a full backup ZIP (DB + metadata) for archiving or moving to another machine."""
         if not output_path.endswith(".zip"):
             output_path = output_path + ".zip"
 
@@ -104,13 +103,13 @@ class BackupService(QThread):
             # 1. The SQLite DB file
             db_path = Path(config.LOCAL_DB_PATH)
             if db_path.exists():
-                zf.write(str(db_path), "gdc_library.db")
+                zf.write(str(db_path), "library.db")
 
             # 2. Metadata JSON
+            profile = self.db.get_school_profile()
             meta = {
-                "college_id": config.COLLEGE_ID,
-                "college_name": config.COLLEGE_NAME,
-                "college_location": config.COLLEGE_LOCATION,
+                "school_name": profile.get("name", ""),
+                "school_address": profile.get("address", ""),
                 "app_version": config.APP_VERSION,
                 "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -143,7 +142,7 @@ class BackupService(QThread):
 
     def _rotate_old_backups(self):
         """Delete oldest backups if total exceeds MAX_BACKUPS."""
-        files = sorted(BACKUP_DIR.glob("gdc_library_*_auto.db"),
+        files = sorted(BACKUP_DIR.glob("library_*_auto.db"),
                        key=lambda f: f.stat().st_mtime)
         while len(files) > MAX_BACKUPS:
             files[0].unlink(missing_ok=True)

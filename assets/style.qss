@@ -1,4 +1,4 @@
-/* Premium Glassmorphism QSS for GDC Library50 */
+/* Premium Glassmorphism QSS for NexLib */
 
 QWidget {
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Roboto", sans-serif;

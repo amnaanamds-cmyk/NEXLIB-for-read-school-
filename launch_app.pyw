@@ -1,6 +1,6 @@
 """
 launch_app.pyw
-Launches the GDC Library50 Management System without a console window.
+Launches NexLib without a console window.
 Identical to main.py but uses the .pyw extension for windowed execution.
 """
 import sys

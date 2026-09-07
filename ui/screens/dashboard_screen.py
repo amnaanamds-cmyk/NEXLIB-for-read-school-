@@ -55,9 +55,8 @@ class StatCard(QFrame):
 class StatsWorker(QThread):
     finished = pyqtSignal(dict, list)
 
-    def __init__(self, fb, db):
+    def __init__(self, db):
         super().__init__()
-        self.fb = fb
         self.db = db
 
     def run(self):
@@ -113,9 +112,8 @@ class StatsWorker(QThread):
 
 
 class DashboardScreen(QWidget):
-    def __init__(self, firebase_service, db_helper):
+    def __init__(self, db_helper):
         super().__init__()
-        self.fb = firebase_service
         self.db = db_helper
         self.worker = None
         self._build_ui()
@@ -282,7 +280,7 @@ class DashboardScreen(QWidget):
 
     def refresh(self):
         self.refresh_btn.setEnabled(False)
-        self.worker = StatsWorker(self.fb, self.db)
+        self.worker = StatsWorker(self.db)
         self.worker.finished.connect(self._on_stats)
         self.worker.start()
 

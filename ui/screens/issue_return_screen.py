@@ -1,6 +1,6 @@
 """
 ui/screens/issue_return_screen.py — Issue & Return system with color-coded due dates,
-atomic Firestore transactions, fine calculation, and history log.
+fine calculation, and history log. Fully offline (local SQLite).
 """
 import time
 import datetime
@@ -173,9 +173,8 @@ class IssueReturnScreen(QWidget):
                    "Issue Date", "Due Date", "Days Left", "Status"]
     HISTORY_COLS = ["Member", "Book", "Issued", "Due", "Returned", "Fine", "Status"]
 
-    def __init__(self, firebase_service, db_helper, auth_service):
+    def __init__(self, db_helper, auth_service):
         super().__init__()
-        self.fb   = firebase_service
         self.db   = db_helper
         self.auth = auth_service
         self.adv  = AdvancedService(db_helper)
@@ -318,7 +317,7 @@ class IssueReturnScreen(QWidget):
         self._populate_history(issues)
 
     def _populate_active(self, issues):
-        fine_rate = self.fb.get_fine_rate()
+        fine_rate = self.db.get_fine_rate()
         self.fine_rate_lbl.setText(f"Fine rate: Rs. {fine_rate}/day")
         self.active_table.setRowCount(len(issues))
         for row, r in enumerate(issues):
@@ -407,7 +406,7 @@ class IssueReturnScreen(QWidget):
         issue = self._issues[row]
 
         days = days_diff(issue.dueDate)
-        fine_rate = self.fb.get_fine_rate()
+        fine_rate = self.db.get_fine_rate()
         fine = abs(days) * fine_rate if days < 0 else 0.0
 
         msg = f"Return '{issue.bookTitle}' from {issue.memberName}?"
@@ -491,7 +490,7 @@ class IssueReturnScreen(QWidget):
         days = days_diff(issue.dueDate)
         fine_rate = 0.0
         try:
-            fine_rate = self.fb.get_fine_rate()
+            fine_rate = self.db.get_fine_rate()
         except Exception:
             fine_rate = 5
         fine = abs(days) * fine_rate if days < 0 else 0.0
@@ -529,7 +528,7 @@ class IssueReturnScreen(QWidget):
         class ScannerDialog(QDialog):
             def __init__(self, parent=None):
                 super().__init__(parent)
-                self.setWindowTitle("📟 Kiosk Scanner Mode — GDC Library50")
+                self.setWindowTitle(f"📟 Kiosk Scanner Mode — {screen.db.get_school_name()}")
                 self.setStyleSheet("""
                     QDialog { background: #0D1B2A; color: #E8EEF8;
                               font-family: 'Segoe UI'; }
@@ -644,7 +643,7 @@ class IssueReturnScreen(QWidget):
                     issue = issues[0]
                     days = days_diff(issue.dueDate)
                     try:
-                        fine_rate = screen.fb.get_fine_rate()
+                        fine_rate = screen.db.get_fine_rate()
                     except Exception:
                         fine_rate = 5
                     fine = abs(days) * fine_rate if days < 0 else 0.0

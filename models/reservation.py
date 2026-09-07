@@ -1,5 +1,5 @@
 """
-models/reservation.py — Reservation data model matching Android/Firestore schema.
+models/reservation.py — Reservation and staff User data models.
 """
 import uuid
 import time
@@ -62,8 +62,7 @@ class User:
     uid: str = ""
     email: str = ""
     name: str = ""
-    role: str = "admin"   # "admin", "librarian", or "director"
-    collegeId: str = ""
+    role: str = "admin"   # "admin" or "librarian"
 
     @staticmethod
     def from_dict(d: dict) -> "User":
@@ -72,5 +71,4 @@ class User:
             email=d.get("email", ""),
             name=d.get("name", ""),
             role=d.get("role", "admin"),
-            collegeId=d.get("collegeId", ""),
         )

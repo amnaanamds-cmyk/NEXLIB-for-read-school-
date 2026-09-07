@@ -1,5 +1,6 @@
 """
-ui/screens/settings_screen.py — Fine rates and other system settings.
+ui/screens/settings_screen.py — School profile, fine rates, staff accounts,
+and other system settings. Fully offline (local SQLite).
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -10,13 +11,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 import json
 import os
-import config
 
 
 class SettingsScreen(QWidget):
-    def __init__(self, firebase_service, auth_service):
+    def __init__(self, db_helper, auth_service):
         super().__init__()
-        self.fb = firebase_service
+        self.db = db_helper
         self.auth = auth_service
         self._build_ui()
         self.refresh()
@@ -57,32 +57,6 @@ class SettingsScreen(QWidget):
         save_btn.setStyleSheet("background: #1E5FD4; color: white; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 700; font-size: 14px; margin-top: 20px;")
         save_btn.clicked.connect(self._save)
 
-        # Directorate Configuration (Addressing user request to fix "Not Configured" error)
-        dir_lbl = QLabel("Directorate Central Network Settings")
-        dir_lbl.setStyleSheet("color: #E6C96E; font-size: 16px; font-weight: bold; margin-top: 20px;")
-        gen_lay.addWidget(dir_lbl)
-
-        dir_form = QFormLayout()
-        self.dir_url = QLineEdit()
-        self.dir_url.setPlaceholderText("http://localhost:8000")
-        self.dir_url.setText(config.DIRECTORATE_API_URL)
-        self.dir_url.setStyleSheet(self.fine_spin.styleSheet())
-
-        self.dir_key = QLineEdit()
-        self.dir_key.setPlaceholderText("Enter Directorate API Key")
-        self.dir_key.setText(config.DIRECTORATE_API_KEY)
-        self.dir_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.dir_key.setStyleSheet(self.fine_spin.styleSheet())
-
-        dir_form.addRow("Central API URL", self.dir_url)
-        dir_form.addRow("API Key", self.dir_key)
-        gen_lay.addLayout(dir_form)
-
-        demo_btn = QPushButton("🔑 Use Demo Key")
-        demo_btn.setStyleSheet("background: #1E3050; color: #E6C96E; border: 1px solid #C8A84B; border-radius: 6px; padding: 4px; font-size: 11px;")
-        demo_btn.clicked.connect(lambda: self.dir_key.setText("gdc_demo_key_2024"))
-        gen_lay.addWidget(demo_btn)
-
         # UI Preferences Mock (7.1, 7.2, 7.3)
         ui_lbl = QLabel("UI Preferences (Applies immediately or on restart)")
         ui_lbl.setStyleSheet("color: #E8EEF8; font-size: 16px; font-weight: bold; margin-top: 20px;")
@@ -119,6 +93,16 @@ class SettingsScreen(QWidget):
         gen_lay.addStretch()
         self.tabs.addTab(gen_tab, "General")
 
+        # School Profile Tab
+        profile_tab = QWidget()
+        self._build_profile_tab(profile_tab)
+        self.tabs.addTab(profile_tab, "School Profile")
+
+        # Staff Accounts Tab
+        staff_tab = QWidget()
+        self._build_staff_tab(staff_tab)
+        self.tabs.addTab(staff_tab, "Staff Accounts")
+
         # 1.5 Circulation Matrix Tab (Enterprise / Koha Feature)
         circ_tab = QWidget()
         self._build_circ_tab(circ_tab)
@@ -134,21 +118,6 @@ class SettingsScreen(QWidget):
         self.audit_table.setStyleSheet("QTableWidget { background: #071428; color: #E8EEF8; border: none; } QHeaderView::section { background: #0D1B2A; color: #6B8CAE; }")
         audit_lay.addWidget(self.audit_table)
         self.tabs.addTab(audit_tab, "Audit Logs")
-
-        # 3. Sync Conflicts Tab
-        sync_tab = QWidget()
-        sync_lay = QVBoxLayout(sync_tab)
-        self.sync_table = QTableWidget()
-        self.sync_table.setColumnCount(5)
-        self.sync_table.setHorizontalHeaderLabels(["Entity", "ID", "Local Value", "Remote Value", "Action"])
-        self.sync_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.sync_table.setStyleSheet("QTableWidget { background: #071428; color: #E8EEF8; border: none; } QHeaderView::section { background: #0D1B2A; color: #6B8CAE; }")
-        sync_lay.addWidget(self.sync_table)
-        
-        res_btn = QPushButton("Refresh Conflicts")
-        res_btn.clicked.connect(self.refresh)
-        sync_lay.addWidget(res_btn)
-        self.tabs.addTab(sync_tab, "Sync Conflicts")
 
         # 4. Developer Tools Tab (8.1, 8.2, 8.3)
         dev_tab = QWidget()
@@ -206,6 +175,166 @@ class SettingsScreen(QWidget):
         layout.addWidget(self.tabs)
         self._init_done = True
 
+    def _build_profile_tab(self, parent):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+        layout.addWidget(QLabel(
+            "This information appears on printed reports, ID cards, and receipts.",
+            styleSheet="color:#A0B4CC;font-size:13px;"
+        ))
+
+        form = QFormLayout()
+        form.setSpacing(14)
+        field_style = "background:#0D1B2A;border:1px solid #1E3050;border-radius:6px;padding:8px;color:white;"
+
+        self.school_name_input = QLineEdit()
+        self.school_name_input.setPlaceholderText("e.g. Springfield High School")
+        self.school_name_input.setStyleSheet(field_style)
+        form.addRow("School Name *", self.school_name_input)
+
+        self.school_address_input = QLineEdit()
+        self.school_address_input.setStyleSheet(field_style)
+        form.addRow("Address", self.school_address_input)
+
+        self.school_phone_input = QLineEdit()
+        self.school_phone_input.setStyleSheet(field_style)
+        form.addRow("Contact Phone", self.school_phone_input)
+
+        self.school_email_input = QLineEdit()
+        self.school_email_input.setStyleSheet(field_style)
+        form.addRow("Contact Email", self.school_email_input)
+
+        layout.addLayout(form)
+
+        save_profile_btn = QPushButton("💾  Save School Profile")
+        save_profile_btn.setStyleSheet(
+            "background: #1E5FD4; color: white; border: none; border-radius: 8px; "
+            "padding: 10px 24px; font-weight: 700; font-size: 14px; margin-top: 10px;"
+        )
+        save_profile_btn.clicked.connect(self._save_school_profile)
+        layout.addWidget(save_profile_btn)
+        layout.addStretch()
+
+    def _save_school_profile(self):
+        name = self.school_name_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Required", "School name cannot be empty.")
+            return
+        self.db.set_school_profile("name", name)
+        self.db.set_school_profile("address", self.school_address_input.text().strip())
+        self.db.set_school_profile("phone", self.school_phone_input.text().strip())
+        self.db.set_school_profile("email", self.school_email_input.text().strip())
+        QMessageBox.information(self, "Saved", "School profile updated. Restart the app to see the new name everywhere.")
+
+    def _build_staff_tab(self, parent):
+        layout = QVBoxLayout(parent)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(14)
+        layout.addWidget(QLabel(
+            "Manage librarian and administrator accounts for this library.",
+            styleSheet="color:#A0B4CC;font-size:13px;"
+        ))
+
+        self.staff_table = QTableWidget()
+        self.staff_table.setColumnCount(3)
+        self.staff_table.setHorizontalHeaderLabels(["Username", "Name", "Role"])
+        self.staff_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.staff_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.staff_table.setStyleSheet(
+            "QTableWidget { background: #071428; color: #E8EEF8; border: none; } "
+            "QHeaderView::section { background: #0D1B2A; color: #6B8CAE; }"
+        )
+        layout.addWidget(self.staff_table)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("➕ Add Staff Account")
+        add_btn.setStyleSheet("background:#059669;color:white;border-radius:8px;padding:8px 16px;font-weight:bold;")
+        add_btn.clicked.connect(self._add_staff)
+        reset_btn = QPushButton("🔑 Reset Password")
+        reset_btn.setStyleSheet("background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;border-radius:8px;padding:8px 16px;")
+        reset_btn.clicked.connect(self._reset_staff_password)
+        del_btn = QPushButton("🗑️ Delete Account")
+        del_btn.setStyleSheet("background:rgba(220,38,38,0.1);color:#F87171;border:1px solid rgba(220,38,38,0.3);border-radius:8px;padding:8px 16px;")
+        del_btn.clicked.connect(self._delete_staff)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(reset_btn)
+        btn_row.addWidget(del_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+    def _refresh_staff_table(self):
+        users = self.db.list_users()
+        self.staff_table.setRowCount(len(users))
+        for i, u in enumerate(users):
+            self.staff_table.setItem(i, 0, QTableWidgetItem(u["username"]))
+            self.staff_table.setItem(i, 1, QTableWidgetItem(u.get("name") or ""))
+            self.staff_table.setItem(i, 2, QTableWidgetItem(u["role"]))
+
+    def _selected_staff_username(self):
+        row = self.staff_table.currentRow()
+        if row < 0:
+            return None
+        return self.staff_table.item(row, 0).text()
+
+    def _add_staff(self):
+        from services.auth_service import AuthService
+        username, ok = QInputDialog.getText(self, "Add Staff Account", "Username:")
+        if not ok or not username.strip():
+            return
+        name, ok2 = QInputDialog.getText(self, "Add Staff Account", "Full Name:")
+        if not ok2:
+            return
+        password, ok3 = QInputDialog.getText(self, "Add Staff Account", "Temporary Password:", QLineEdit.EchoMode.Password)
+        if not ok3 or not password:
+            return
+        role, ok4 = QInputDialog.getItem(self, "Add Staff Account", "Role:", ["librarian", "admin"], 0, False)
+        if not ok4:
+            return
+
+        auth = AuthService(self.db)
+        ok, err = auth.create_account(username, password, name, role)
+        if ok:
+            QMessageBox.information(self, "Added", f"Staff account '{username}' created.")
+            self._refresh_staff_table()
+        else:
+            QMessageBox.warning(self, "Error", err)
+
+    def _reset_staff_password(self):
+        from services.auth_service import AuthService
+        username = self._selected_staff_username()
+        if not username:
+            QMessageBox.information(self, "Select", "Please select a staff account first.")
+            return
+        password, ok = QInputDialog.getText(self, "Reset Password", f"New password for '{username}':", QLineEdit.EchoMode.Password)
+        if not ok or not password:
+            return
+        user = self.db.get_user_by_username(username)
+        if not user:
+            return
+        auth = AuthService(self.db)
+        ok, err = auth.change_password(user["id"], password)
+        if ok:
+            QMessageBox.information(self, "Done", f"Password reset for '{username}'.")
+        else:
+            QMessageBox.warning(self, "Error", err)
+
+    def _delete_staff(self):
+        username = self._selected_staff_username()
+        if not username:
+            QMessageBox.information(self, "Select", "Please select a staff account first.")
+            return
+        if self.auth.current_user and self.auth.current_user.email == username:
+            QMessageBox.warning(self, "Not Allowed", "You cannot delete the account you're currently logged in as.")
+            return
+        reply = QMessageBox.question(self, "Delete Account", f"Delete staff account '{username}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            user = self.db.get_user_by_username(username)
+            if user:
+                self.db.delete_user(user["id"])
+                self._refresh_staff_table()
+
     def _build_circ_tab(self, parent):
         layout = QVBoxLayout(parent)
         layout.setSpacing(14)
@@ -236,38 +365,30 @@ class SettingsScreen(QWidget):
 
     def refresh(self):
         try:
-            rate = self.fb.get_fine_rate()
-            self.fine_spin.setValue(rate)
+            self.fine_spin.setValue(self.db.get_fine_rate())
         except Exception:
             pass
-            
+
+        profile = self.db.get_school_profile()
+        self.school_name_input.setText(profile.get("name", ""))
+        self.school_address_input.setText(profile.get("address", ""))
+        self.school_phone_input.setText(profile.get("phone", ""))
+        self.school_email_input.setText(profile.get("email", ""))
+
+        self._refresh_staff_table()
         self._load_circ_rules()
-        
+
         # Load Audit Logs
         try:
-            from services.database_helper import DatabaseHelper
-            db = DatabaseHelper()
-            logs = db.get_audit_logs_local(50)
+            logs = self.db.get_audit_logs_local(50)
             self.audit_table.setRowCount(len(logs))
             for i, row in enumerate(logs):
                 self.audit_table.setItem(i, 0, QTableWidgetItem(row.get("timestampStr", "")))
                 self.audit_table.setItem(i, 1, QTableWidgetItem(row.get("userEmail", "")))
                 self.audit_table.setItem(i, 2, QTableWidgetItem(row.get("action", "")))
                 self.audit_table.setItem(i, 3, QTableWidgetItem(row.get("detail", "")))
-                
-            conflicts = db.get_unresolved_conflicts()
-            self.sync_table.setRowCount(len(conflicts))
-            for i, row in enumerate(conflicts):
-                self.sync_table.setItem(i, 0, QTableWidgetItem(row.get("entityType", "")))
-                self.sync_table.setItem(i, 1, QTableWidgetItem(row.get("syncId", "")))
-                self.sync_table.setItem(i, 2, QTableWidgetItem(row.get("localValue", "")[:50]))
-                self.sync_table.setItem(i, 3, QTableWidgetItem(row.get("remoteValue", "")[:50]))
-                
-                btn = QPushButton("Resolve (Keep Local)")
-                btn.clicked.connect(lambda _, cid=row.get("id"): self._resolve_conflict(cid))
-                self.sync_table.setCellWidget(i, 4, btn)
         except Exception as e:
-            print(f"Error loading logs/conflicts: {e}")
+            print(f"Error loading audit logs: {e}")
 
     def _toggle_lang(self, lang):
         if hasattr(self, '_init_done'):
@@ -286,7 +407,7 @@ class SettingsScreen(QWidget):
             QMessageBox.information(self, "Font Scaling", f"Mock: Accessibility Font Scale adjusted to {scale}x.")
 
     def _share_apk(self):
-        QMessageBox.information(self, "Share App", "Mock: Extracted GDC_Library_Shareable.apk to Desktop.")
+        QMessageBox.information(self, "Share App", "Mock: Extracted a shareable app package to Desktop.")
 
     def _seed_data(self):
         reply = QMessageBox.question(self, "Seed Data", "Insert sample mock data into the database?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -304,19 +425,14 @@ class SettingsScreen(QWidget):
         
     def _create_zip_backup(self):
         import shutil, time
-        import os
         from PyQt6.QtWidgets import QFileDialog
-        from services.database_helper import DatabaseHelper
-        
-        # Simulate creating an encrypted ZIP backup
-        backup_name = f"GDC_Library_Backup_{time.strftime('%Y%m%d_%H%M%S')}.zip"
-        path, _ = QFileDialog.getSaveFileName(self, "Save Encrypted Backup", backup_name, "ZIP Archives (*.zip)")
+
+        backup_name = f"Library_Backup_{time.strftime('%Y%m%d_%H%M%S')}.zip"
+        path, _ = QFileDialog.getSaveFileName(self, "Save Backup", backup_name, "ZIP Archives (*.zip)")
         if path:
             try:
-                # We mock creating the zip by just copying the sqlite db as a .zip for now
-                db = DatabaseHelper()
-                shutil.copy2(db.db_path, path)
-                QMessageBox.information(self, "Backup Success", f"Database securely backed up and encrypted to:\n{path}")
+                shutil.copy2(self.db.db_path, path)
+                QMessageBox.information(self, "Backup Success", f"Database backed up to:\n{path}")
             except Exception as e:
                 QMessageBox.critical(self, "Backup Failed", f"Failed to create backup: {e}")
 
@@ -334,59 +450,19 @@ class SettingsScreen(QWidget):
             return
 
         try:
-            adv = AdvancedService(DatabaseHelper())
+            adv = AdvancedService(self.db)
             adv.export_full_database_csv(folder)
             QMessageBox.information(self, "Success", f"Full database backup exported to:\n{folder}")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Export failed: {e}")
 
-    def _resolve_conflict(self, cid):
-        try:
-            from services.database_helper import DatabaseHelper
-            db = DatabaseHelper()
-            db.resolve_conflict(cid)
-            self.refresh()
-            QMessageBox.information(self, "Resolved", "Conflict marked as resolved. Local changes will be pushed on next sync.")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", str(e))
-
     def _save(self):
         try:
             val = self.fine_spin.value()
             email = self.auth.current_user.email if self.auth.current_user else ""
-            self.fb.save_settings(val, email)
-
-            # Save Directorate Settings locally
-            config.DIRECTORATE_API_URL = self.dir_url.text().strip()
-            config.DIRECTORATE_API_KEY = self.dir_key.text().strip()
-
-            # Persist to .env for next restart
-            env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
-            lines = []
-            if os.path.exists(env_file):
-                with open(env_file, "r") as f:
-                    lines = f.readlines()
-
-            new_lines = []
-            found_url = False
-            found_key = False
-            for line in lines:
-                if line.startswith("DIRECTORATE_API_URL="):
-                    new_lines.append(f"DIRECTORATE_API_URL={config.DIRECTORATE_API_URL}\n")
-                    found_url = True
-                elif line.startswith("DIRECTORATE_API_KEY="):
-                    new_lines.append(f"DIRECTORATE_API_KEY={config.DIRECTORATE_API_KEY}\n")
-                    found_key = True
-                else:
-                    new_lines.append(line)
-
-            if not found_url: new_lines.append(f"DIRECTORATE_API_URL={config.DIRECTORATE_API_URL}\n")
-            if not found_key: new_lines.append(f"DIRECTORATE_API_KEY={config.DIRECTORATE_API_KEY}\n")
-
-            with open(env_file, "w") as f:
-                f.writelines(new_lines)
-
-            QMessageBox.information(self, "Saved", "Settings updated and persisted successfully.")
+            self.db.set_fine_rate(val)
+            self.db.log_audit_local(email, "settings_update", f"fineRate: {val}")
+            QMessageBox.information(self, "Saved", "Settings updated successfully.")
         except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
 
@@ -437,9 +513,7 @@ class SettingsScreen(QWidget):
     def _run_health_check(self):
         """Runs the DB health check and displays results in a dialog."""
         try:
-            from services.database_helper import DatabaseHelper
-            db = DatabaseHelper()
-            res = db.run_health_check()
+            res = self.db.run_health_check()
             
             dlg = QDialog(self)
             dlg.setWindowTitle("🩺 Data Integrity Health Check Report")

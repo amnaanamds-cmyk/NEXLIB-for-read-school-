@@ -1,7 +1,7 @@
 """
 ui/screens/books_screen.py — Full Book Management screen.
-Real-time Firestore listener, add/edit/delete form, search/filter/sort,
-ISBN validation, subject browsing, new arrivals, cover upload.
+Add/edit/delete form, search/filter/sort, ISBN validation, subject
+browsing, new arrivals, cover upload — all fully offline (local SQLite).
 """
 import re
 import time
@@ -26,29 +26,18 @@ def validate_isbn(isbn: str) -> bool:
     return bool(ISBN10_RE.match(clean) or ISBN13_RE.match(clean))
 
 
-class LoadBooksWorker(QThread):
-    finished = pyqtSignal(list)
-    def __init__(self, fb): super().__init__(); self.fb = fb
-    def run(self):
-        try: self.finished.emit(self.fb.get_all_books())
-        except: self.finished.emit([])
-
-
 class SaveBookWorker(QThread):
     finished = pyqtSignal(bool, str)
-    def __init__(self, fb, db, book, user_email, cover_path=None):
+    def __init__(self, db, book, user_email, cover_path=None):
         super().__init__()
-        self.fb, self.db, self.book, self.user_email, self.cover_path = fb, db, book, user_email, cover_path
+        self.db, self.book, self.user_email, self.cover_path = db, book, user_email, cover_path
     def run(self):
         try:
             if self.cover_path:
-                remote = f"covers/{self.book.syncId or uuid.uuid4()}.jpg"
-                try:
-                    url = self.fb.upload_file(self.cover_path, remote)
-                    self.book.digitalUrl = self.book.digitalUrl or url
-                except Exception:
-                    # If offline, keep local path or url as none, but allow saving locally
-                    pass
+                from services.media_service import store_file
+                stored = store_file(self.cover_path, "covers")
+                if stored:
+                    self.book.digitalUrl = self.book.digitalUrl or stored
             self.db.save_book(self.book)
             # Log audit trail locally
             self.db.log_audit_local(self.user_email, "book_save", f"Book: {self.book.title} ({self.book.syncId})")
@@ -302,12 +291,10 @@ class BooksScreen(QWidget):
     TABLE_COLS = ["Title", "Author", "ISBN", "Acc No", "Publisher",
                   "Category", "Status", "Digital"]
 
-    def __init__(self, firebase_service, db_helper, auth_service, read_only=False):
+    def __init__(self, db_helper, auth_service):
         super().__init__()
-        self.fb = firebase_service
         self.db = db_helper
         self.auth = auth_service
-        self.read_only = read_only
         self._books = []
 
         # Advanced utilities service
@@ -329,39 +316,38 @@ class BooksScreen(QWidget):
         hdr.addWidget(title)
         hdr.addStretch()
 
-        if not self.read_only:
-            # Import / Export & Barcode Actions
-            self.imp_btn = QPushButton("📥 Import")
-            self.exp_btn = QPushButton("📤 Export CSV")
-            self.marc_btn = QPushButton("📤 Export MARC21")
-            self.bar_btn = QPushButton("🏷️ Barcodes")
-            self.spine_btn = QPushButton("🏷️ Spine Labels")
-            self.asset_btn = QPushButton("☁️ Upload Asset (DAM)")
+        # Import / Export & Barcode Actions
+        self.imp_btn = QPushButton("📥 Import")
+        self.exp_btn = QPushButton("📤 Export CSV")
+        self.marc_btn = QPushButton("📤 Export MARC21")
+        self.bar_btn = QPushButton("🏷️ Barcodes")
+        self.spine_btn = QPushButton("🏷️ Spine Labels")
+        self.asset_btn = QPushButton("☁️ Upload Asset (DAM)")
 
-            for b in (self.imp_btn, self.exp_btn, self.marc_btn, self.bar_btn, self.spine_btn, self.asset_btn):
-                b.setStyleSheet("background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;border-radius:6px;padding:6px 12px;font-size:11px;")
-            self.imp_btn.clicked.connect(self._import_doc)
-            self.exp_btn.clicked.connect(self._export_csv)
-            self.marc_btn.clicked.connect(self._export_marc21)
-            self.bar_btn.clicked.connect(self._print_barcodes)
-            self.spine_btn.clicked.connect(self._print_spine_labels)
-            self.asset_btn.clicked.connect(self._upload_asset)
+        for b in (self.imp_btn, self.exp_btn, self.marc_btn, self.bar_btn, self.spine_btn, self.asset_btn):
+            b.setStyleSheet("background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;border-radius:6px;padding:6px 12px;font-size:11px;")
+        self.imp_btn.clicked.connect(self._import_doc)
+        self.exp_btn.clicked.connect(self._export_csv)
+        self.marc_btn.clicked.connect(self._export_marc21)
+        self.bar_btn.clicked.connect(self._print_barcodes)
+        self.spine_btn.clicked.connect(self._print_spine_labels)
+        self.asset_btn.clicked.connect(self._upload_asset)
 
-            hdr.addWidget(self.imp_btn)
-            hdr.addWidget(self.exp_btn)
-            hdr.addWidget(self.marc_btn)
-            hdr.addWidget(self.bar_btn)
-            hdr.addWidget(self.spine_btn)
-            hdr.addWidget(self.asset_btn)
+        hdr.addWidget(self.imp_btn)
+        hdr.addWidget(self.exp_btn)
+        hdr.addWidget(self.marc_btn)
+        hdr.addWidget(self.bar_btn)
+        hdr.addWidget(self.spine_btn)
+        hdr.addWidget(self.asset_btn)
 
-            add_btn = QPushButton("➕  Add Book")
-            add_btn.setStyleSheet(
-                "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1E5FD4,stop:1 #2872F0);"
-                "color:white;border:none;border-radius:8px;padding:9px 18px;"
-                "font-size:13px;font-weight:700;"
-            )
-            add_btn.clicked.connect(self._add_book)
-            hdr.addWidget(add_btn)
+        add_btn = QPushButton("➕  Add Book")
+        add_btn.setStyleSheet(
+            "background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1E5FD4,stop:1 #2872F0);"
+            "color:white;border:none;border-radius:8px;padding:9px 18px;"
+            "font-size:13px;font-weight:700;"
+        )
+        add_btn.clicked.connect(self._add_book)
+        hdr.addWidget(add_btn)
         layout.addLayout(hdr)
 
         # Search & Filters
@@ -443,38 +429,37 @@ class BooksScreen(QWidget):
         )
         action_row.addWidget(self.view_btn)
 
-        if not self.read_only:
-            self.edit_btn = QPushButton("✏️  Edit")
-            self.edit_btn.clicked.connect(self._edit_book)
-            self.del_btn  = QPushButton("🗑️  Delete")
-            self.del_btn.clicked.connect(self._delete_book)
-            self.share_btn = QPushButton("🔗 Share")
-            self.share_btn.clicked.connect(self._share_book)
-            self.lost_btn = QPushButton("❌ Mark Lost")
-            self.lost_btn.clicked.connect(self._mark_lost)
+        self.edit_btn = QPushButton("✏️  Edit")
+        self.edit_btn.clicked.connect(self._edit_book)
+        self.del_btn  = QPushButton("🗑️  Delete")
+        self.del_btn.clicked.connect(self._delete_book)
+        self.share_btn = QPushButton("🔗 Share")
+        self.share_btn.clicked.connect(self._share_book)
+        self.lost_btn = QPushButton("❌ Mark Lost")
+        self.lost_btn.clicked.connect(self._mark_lost)
 
-            self.edit_btn.setStyleSheet(
-                "background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;"
-                "border-radius:8px;padding:8px 16px;font-size:13px;"
-            )
-            self.del_btn.setStyleSheet(
-                "background:rgba(220,38,38,0.1);color:#F87171;"
-                "border:1px solid rgba(220,38,38,0.3);border-radius:8px;padding:8px 16px;font-size:13px;"
-            )
-            self.share_btn.setStyleSheet(
-                "background:rgba(16,185,129,0.1);color:#10B981;"
-                "border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:8px 16px;font-size:13px;"
-            )
-            self.lost_btn.setStyleSheet(
-                "background:rgba(245,158,11,0.1);color:#F59E0B;"
-                "border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:8px 16px;font-size:13px;"
-            )
-            
-            action_row.addWidget(self.share_btn)
-            action_row.addWidget(self.lost_btn)
-            action_row.addWidget(self.edit_btn)
-            action_row.addWidget(self.del_btn)
-            
+        self.edit_btn.setStyleSheet(
+            "background:#1E3050;color:#A0B4CC;border:1px solid #1E3050;"
+            "border-radius:8px;padding:8px 16px;font-size:13px;"
+        )
+        self.del_btn.setStyleSheet(
+            "background:rgba(220,38,38,0.1);color:#F87171;"
+            "border:1px solid rgba(220,38,38,0.3);border-radius:8px;padding:8px 16px;font-size:13px;"
+        )
+        self.share_btn.setStyleSheet(
+            "background:rgba(16,185,129,0.1);color:#10B981;"
+            "border:1px solid rgba(16,185,129,0.3);border-radius:8px;padding:8px 16px;font-size:13px;"
+        )
+        self.lost_btn.setStyleSheet(
+            "background:rgba(245,158,11,0.1);color:#F59E0B;"
+            "border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:8px 16px;font-size:13px;"
+        )
+
+        action_row.addWidget(self.share_btn)
+        action_row.addWidget(self.lost_btn)
+        action_row.addWidget(self.edit_btn)
+        action_row.addWidget(self.del_btn)
+
         layout.addLayout(action_row)
 
     def refresh(self):
@@ -547,11 +532,11 @@ class BooksScreen(QWidget):
 
     def _save_book(self, book, cover_path):
         user_email = self.auth.current_user.email if self.auth.current_user else ""
-        self._worker = SaveBookWorker(self.fb, self.db, book, user_email, cover_path)
+        self._worker = SaveBookWorker(self.db, book, user_email, cover_path)
 
         def _on_finished(ok, err):
             if ok:
-                QMessageBox.information(self, "Saved", "Book saved locally and queued for synchronization!")
+                QMessageBox.information(self, "Saved", "Book saved successfully.")
                 self.refresh()
             else:
                 QMessageBox.warning(self, "Error", f"Save failed: {err}")

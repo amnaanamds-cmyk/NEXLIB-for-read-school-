@@ -1,6 +1,7 @@
 """
 ui/screens/opac_screen.py — OPAC (Online Public Access Catalog) Monitor.
-Simulates a public-facing search kiosk for students with reservation capability.
+A public-facing search kiosk for students with reservation capability,
+fully offline (local SQLite).
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -41,9 +42,8 @@ class ReserveWorker(QThread):
 
 
 class OpacScreen(QWidget):
-    def __init__(self, firebase_service, db_helper):
+    def __init__(self, db_helper):
         super().__init__()
-        self.fb = firebase_service
         self.db = db_helper
         self._books = []
         self._build_ui()
@@ -63,7 +63,7 @@ class OpacScreen(QWidget):
         titles = QVBoxLayout()
         title = QLabel("Online Public Access Catalog")
         title.setStyleSheet("font-size: 26px; font-weight: 900; color: #E8EEF8; font-family: 'Segoe UI';")
-        sub = QLabel("Search the GDC Library50 database and reserve books.")
+        sub = QLabel(f"Search the {self.db.get_school_name()} catalog and reserve books.")
         sub.setStyleSheet("color: #6B8CAE; font-size: 14px;")
         titles.addWidget(title)
         titles.addWidget(sub)
@@ -93,7 +93,7 @@ class OpacScreen(QWidget):
         self.cat_filter.currentTextChanged.connect(self._filter)
         s_lay.addWidget(self.cat_filter)
         
-        self.ai_btn = QPushButton("🤖 AI Recommend")
+        self.ai_btn = QPushButton("💡 Suggest Books")
         self.ai_btn.setStyleSheet("background: #C8A84B; color: #0D1F38; border-radius: 6px; padding: 6px 12px; font-weight: bold;")
         self.ai_btn.clicked.connect(self._ai_recommend)
         s_lay.addWidget(self.ai_btn)
@@ -194,7 +194,7 @@ class OpacScreen(QWidget):
             # Start reservation
             self.worker = ReserveWorker(self.db, book, member.id, member.name)
             self.worker.finished.connect(lambda ok, err: (
-                (QMessageBox.information(self, "Success", f"Book reserved locally for {member.name} and queued for sync!") or self.refresh()) if ok
+                (QMessageBox.information(self, "Success", f"Book reserved for {member.name}!") or self.refresh()) if ok
                 else QMessageBox.warning(self, "Error", f"Failed: {err}")
             ))
             self.worker.start()
@@ -203,43 +203,40 @@ class OpacScreen(QWidget):
             QMessageBox.warning(self, "Error", str(e))
 
     def _ai_recommend(self):
-        query = self.search.text().strip()
+        """Suggest books using local catalog data only — no network required.
+        Matches the typed topic against title/author/category, then ranks by
+        how often each book has been borrowed."""
+        query = self.search.text().strip().lower()
         if not query:
-            QMessageBox.information(self, "AI Recommendations", "Please type a topic or interest in the search bar first (e.g. 'Science Fiction' or 'Data Science').")
+            QMessageBox.information(self, "Suggest Books", "Please type a topic or interest in the search bar first (e.g. 'Science Fiction' or 'Data Science').")
             return
-            
-        import config
-        if not getattr(config, 'GEMINI_API_KEY', None):
-            QMessageBox.warning(self, "AI Error", "Gemini API Key is missing. Please set GEMINI_API_KEY in .env.")
+
+        available = [b for b in self.db.get_books() if b.status == "Available"]
+        matches = [b for b in available
+                   if query in (b.title or "").lower()
+                   or query in (b.author or "").lower()
+                   or query in (b.category or "").lower()]
+
+        if not matches:
+            cats = sorted({b.category for b in available if b.category})
+            hint = f"\n\nTry one of these categories: {', '.join(cats[:8])}" if cats else ""
+            QMessageBox.information(self, "Suggest Books", f"No available books matched '{query}'.{hint}")
             return
-            
-        try:
-            from google import genai
-            client = genai.Client(api_key=config.GEMINI_API_KEY)
-            
-            books = self.db.execute("SELECT title, author FROM books WHERE status='Available' LIMIT 50").fetchall()
-            if not books:
-                book_list = "No available books currently."
-            else:
-                book_list = "\n".join([f"- {b[0]} by {b[1]}" for b in books])
-                
-            prompt = (f"You are an AI librarian. The user is asking about: '{query}'.\n"
-                      f"Here is a sample of available books in our library:\n{book_list}\n\n"
-                      f"Please provide a helpful, concise recommendation based on these books if possible, or general reading advice.")
-            
-            response = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=prompt
-            )
-            
-            QMessageBox.information(
-                self, "AI Recommendations", 
-                f"🤖 Gemini AI Recommendations:\n\n{response.text}"
-            )
-        except ImportError:
-            QMessageBox.warning(self, "AI Error", "google-genai package is not installed. Please run pip install -r requirements.txt")
-        except Exception as e:
-            QMessageBox.warning(self, "AI Error", f"An error occurred with Gemini API: {e}")
+
+        issues = self.db.get_issues()
+        borrow_counts = {}
+        for i in issues:
+            borrow_counts[i.bookTitle] = borrow_counts.get(i.bookTitle, 0) + 1
+        matches.sort(key=lambda b: borrow_counts.get(b.title, 0), reverse=True)
+
+        lines = "".join(
+            f"<li><b>{b.title}</b> by {b.author or 'Unknown'} <i>({b.category or 'Uncategorized'})</i></li>"
+            for b in matches[:8]
+        )
+        QMessageBox.information(
+            self, "💡 Suggested Books",
+            f"<b>Available books matching '{query}':</b><ul>{lines}</ul>"
+        )
 
     # ── Enterprise: Patron Self-Checkout Kiosk ───────────────────────────────
     def _open_kiosk(self):

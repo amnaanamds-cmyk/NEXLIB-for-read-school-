@@ -1,7 +1,8 @@
 """
 ui/main_window.py
 Main application window with collapsible sidebar, dark/light theme toggle,
-inactivity auto-logout timer, and role-based navigation.
+inactivity auto-logout timer, and role-based navigation. Fully offline —
+everything reads and writes the local SQLite database only.
 """
 import time
 from PyQt6.QtWidgets import (
@@ -14,8 +15,6 @@ from PyQt6.QtGui import QFont, QColor, QIcon
 
 import config
 
-
-# Theme configs removed; now uses assets/style.qss dynamically
 
 class NavButton(QPushButton):
     def __init__(self, icon: str, label: str, parent=None):
@@ -43,25 +42,17 @@ class MainWindow(QMainWindow):
         ("🔍", "OPAC Monitor",    "opac"),
         ("📦", "Inventory",       "inventory"),
         ("🌍", "ILL Network",     "ill"),
-        ("🔄", "Book Transfers",    "transfers"),
         ("💰", "Acquisitions",    "acquisitions"),
         ("📰", "Serials",         "serials"),
         ("🚀", "Enterprise Feat.", "enterprise"),
         ("📊", "Reports",         "reports"),
         ("⚙️", "Settings",        "settings"),
     ]
-    DIRECTOR_NAV = [
-        ("🎯", "Director Dashboard", "director"),
-        ("📊", "Reports",            "reports"),
-    ]
 
-    def __init__(self, auth_service, firebase_service, db_helper, sync_service, directorate_sync=None):
+    def __init__(self, auth_service, db_helper):
         super().__init__()
         self.auth = auth_service
-        self.fb = firebase_service
         self.db = db_helper
-        self.sync = sync_service
-        self.directorate_sync = directorate_sync
         self.is_dark = (config.DEFAULT_THEME == "dark")
         self.current_screen = ""
         self._nav_btns = {}
@@ -72,16 +63,13 @@ class MainWindow(QMainWindow):
         self._idle_timer.timeout.connect(self._check_inactivity)
         self._idle_timer.start(30_000)  # check every 30 s
 
-        self.setWindowTitle(f"{config.APP_NAME} — {config.APP_VERSION}")
+        self.setWindowTitle(f"{self.db.get_school_name()} — {config.APP_NAME}")
         self.setMinimumSize(1280, 800)
         self._build_ui()
         self._apply_theme()
-        
-        # Connect Sync status
-        self.sync.sync_status.connect(self._update_sync_status)
-        
-        self.navigate_to("director" if self.auth.is_director else "dashboard")
-        
+
+        self.navigate_to("dashboard")
+
         # Setup Power User Keyboard Shortcuts
         self._setup_shortcuts()
 
@@ -101,7 +89,7 @@ class MainWindow(QMainWindow):
                 screen.search_bar.setFocus()
             elif hasattr(screen, "search_input"):
                 screen.search_input.setFocus()
-    
+
     def _cmd_add_member(self):
         self.navigate_to("members")
         if hasattr(self._screens["members"], "_add_member"):
@@ -144,8 +132,9 @@ class MainWindow(QMainWindow):
         sb_layout.setSpacing(4)
 
         # Brand
-        brand = QLabel("📚 GDC Library50")
+        brand = QLabel(f"📚 {self.db.get_school_name()}")
         brand.setObjectName("appBrand")
+        brand.setWordWrap(True)
         sb_layout.addWidget(brand)
 
         # User info
@@ -161,9 +150,8 @@ class MainWindow(QMainWindow):
         divider.setStyleSheet("background: #1E3050; margin: 8px 0;")
         sb_layout.addWidget(divider)
 
-        # Nav buttons (director sees limited nav)
-        nav_items = self.DIRECTOR_NAV if self.auth.is_director else self.NAV_ITEMS
-        for icon, label, key in nav_items:
+        # Nav buttons
+        for icon, label, key in self.NAV_ITEMS:
             btn = NavButton(icon, label)
             btn.clicked.connect(lambda _, k=key: self.navigate_to(k))
             self._nav_btns[key] = btn
@@ -172,9 +160,10 @@ class MainWindow(QMainWindow):
         sb_layout.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Policy.Minimum,
                                             QSizePolicy.Policy.Expanding))
 
-        # Sync status
-        self.status_lbl = QLabel("🟢  Connected")
+        # Status
+        self.status_lbl = QLabel("💾  Local Database")
         self.status_lbl.setObjectName("statusBar")
+        self.status_lbl.setStyleSheet("color: #2EC98A;")
         sb_layout.addWidget(self.status_lbl)
 
         # Theme toggle
@@ -205,38 +194,32 @@ class MainWindow(QMainWindow):
         from ui.screens.opac_screen import OpacScreen
         from ui.screens.reports_screen import ReportsScreen
         from ui.screens.settings_screen import SettingsScreen
-        from ui.screens.director_screen import DirectorScreen
         from ui.screens.inventory_screen import InventoryScreen
         from ui.screens.acquisitions_screen import AcquisitionsScreen
         from ui.screens.serials_screen import SerialsScreen
         from ui.screens.ill_screen import ILLScreen
-        from ui.screens.transfer_screen import TransferScreen
         from ui.screens.enterprise_screen import EnterpriseFeaturesScreen
 
-        is_ro = self.auth.is_director   # read-only for director
-
         self._screens = {
-            "dashboard":   DashboardScreen(self.fb, self.db),
-            "books":       BooksScreen(self.fb, self.db, self.auth, read_only=is_ro),
-            "members":     MembersScreen(self.fb, self.db, self.auth, read_only=is_ro),
-            "issue_return": IssueReturnScreen(self.fb, self.db, self.auth),
-            "opac":        OpacScreen(self.fb, self.db),
+            "dashboard":   DashboardScreen(self.db),
+            "books":       BooksScreen(self.db, self.auth),
+            "members":     MembersScreen(self.db, self.auth),
+            "issue_return": IssueReturnScreen(self.db, self.auth),
+            "opac":        OpacScreen(self.db),
             "inventory":   InventoryScreen(self.db),
             "ill":         ILLScreen(self.db),
             "acquisitions": AcquisitionsScreen(self.db),
             "serials":     SerialsScreen(self.db),
             "enterprise":  EnterpriseFeaturesScreen(self.db),
-            "reports":     ReportsScreen(self.fb, self.db, self.auth),
-            "settings":    SettingsScreen(self.fb, self.auth),
-            "director":    DirectorScreen(self.fb, self.db),
-            "transfers":   TransferScreen(),
+            "reports":     ReportsScreen(self.db, self.auth),
+            "settings":    SettingsScreen(self.db, self.auth),
         }
-        
+
         from PyQt6.QtWidgets import QScrollArea
         self._scroll_areas = {}
         for key, screen in self._screens.items():
             # Force a minimum height for static screens to trigger scrolling in small windows
-            if key in ("dashboard", "settings", "enterprise", "director"):
+            if key in ("dashboard", "settings", "enterprise"):
                 screen.setMinimumHeight(1000)
 
             scroll = QScrollArea()
@@ -251,9 +234,6 @@ class MainWindow(QMainWindow):
 
     # ── Navigation ────────────────────────────────────────────────────────────
     def navigate_to(self, key: str):
-        # Directors cannot access write-heavy screens
-        if self.auth.is_director and key not in ("director", "reports", "transfers"):
-            return
         if key not in self._scroll_areas:
             return
 
@@ -261,21 +241,11 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self._scroll_areas[key])
         for k, btn in self._nav_btns.items():
             btn.set_active(k == key)
-        
+
         # Refresh data on screen if it has a refresh method
         screen = self._screens[key]
         if hasattr(screen, "refresh"):
             screen.refresh()
-
-    def _update_sync_status(self, text: str):
-        self.status_lbl.setText(text)
-        # Change color based on status
-        if "Offline" in text:
-            self.status_lbl.setStyleSheet("color: #EF4444;")
-        elif "Syncing" in text:
-            self.status_lbl.setStyleSheet("color: #F59E0B;")
-        else:
-            self.status_lbl.setStyleSheet("color: #2EC98A;")
 
     # ── Theme ─────────────────────────────────────────────────────────────────
     def _toggle_theme(self):
@@ -290,7 +260,7 @@ class MainWindow(QMainWindow):
                 base_qss = f.read()
         except Exception:
             base_qss = ""
-            
+
         # Additional color palette injection
         if self.is_dark:
             colors = """
@@ -310,7 +280,7 @@ class MainWindow(QMainWindow):
             QPushButton#navBtn[active="true"] { background: rgba(30,95,212,0.12); color: #1E5FD4; border-left: 3px solid #1E5FD4; }
             QLabel#appBrand { color: #1E5FD4; font-size: 16px; font-weight: 900; }
             """
-        
+
         self.setStyleSheet(base_qss + colors)
 
     # ── Inactivity ────────────────────────────────────────────────────────────
@@ -338,8 +308,5 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 return
         self.auth.sign_out()
-        self.sync.stop()
-        if getattr(self, "directorate_sync", None):
-            self.directorate_sync.stop()
         self._idle_timer.stop()
         self.logout_requested.emit()
