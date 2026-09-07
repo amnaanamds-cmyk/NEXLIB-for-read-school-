@@ -552,8 +552,6 @@ class ReportsScreen(QWidget):
 
                 if phone:
                     clean_phone = phone.replace("+", "").replace("-", "").replace(" ", "")
-                    if not clean_phone.startswith("92"):
-                        clean_phone = "92" + clean_phone.lstrip("0")
                     wa_url = f"https://wa.me/{clean_phone}?text={quote(msg)}"
                 else:
                     wa_url = f"https://wa.me/?text={quote(msg)}"

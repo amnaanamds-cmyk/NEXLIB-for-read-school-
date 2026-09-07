@@ -145,8 +145,8 @@ class OpacScreen(QWidget):
         q = self.search.text().lower()
         cat = self.cat_filter.currentText()
         
-        filtered = [b for b in self._books 
-                    if (not q or any(q in f.lower() for f in [b.title, b.author]))
+        filtered = [b for b in self._books
+                    if (not q or any(q in (f or "").lower() for f in [b.title, b.author, b.category]))
                     and (cat == "All Categories" or b.category == cat)]
                     
         self.table.setRowCount(len(filtered))

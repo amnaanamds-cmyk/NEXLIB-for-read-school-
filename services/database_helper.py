@@ -275,7 +275,23 @@ class DatabaseHelper:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_issued_status ON issued_books(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_members_memberId ON members(memberId)")
 
+            self._repair_missing_ids(conn, "books")
+            self._repair_missing_ids(conn, "members")
+            self._repair_missing_ids(conn, "issued_books")
+            self._repair_missing_ids(conn, "reservations")
+
             conn.commit()
+
+    def _repair_missing_ids(self, conn, table: str):
+        """One-time repair: assign real unique ids to any rows saved with id=0
+        (a bug in earlier versions where every new book/member got id=0)."""
+        rows = conn.execute(f"SELECT rowid FROM {table} WHERE id IS NULL OR id = 0").fetchall()
+        if not rows:
+            return
+        next_id = conn.execute(f"SELECT COALESCE(MAX(id), 0) FROM {table}").fetchone()[0] + 1
+        for r in rows:
+            conn.execute(f"UPDATE {table} SET id = ? WHERE rowid = ?", (next_id, r["rowid"]))
+            next_id += 1
 
     # ── Local Books Operations ───────────────────────────────────────────────
     def get_books(self, include_deleted=False) -> List[Book]:
@@ -322,8 +338,10 @@ class DatabaseHelper:
             return [Book.from_dict(dict(r)) for r in rows], total_count
 
     def save_book(self, book: Book):
-        """Save (insert or update) a book locally."""
+        """Save (insert or update) a book locally. Assigns a unique local id on first save."""
         with self._get_conn() as conn:
+            if not book.id:
+                book.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM books").fetchone()[0]
             conn.execute("""
                 INSERT INTO books (
                     syncId, id, isbn, accNo, title, author, publisher, publisherPlace,
@@ -363,7 +381,10 @@ class DatabaseHelper:
             return [Member.from_dict(dict(r)) for r in rows]
 
     def save_member(self, member: Member):
+        """Save (insert or update) a member locally. Assigns a unique local id on first save."""
         with self._get_conn() as conn:
+            if not member.id:
+                member.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM members").fetchone()[0]
             conn.execute("""
                 INSERT INTO members (
                     syncId, id, memberId, name, email, phone, department, memberType,
@@ -397,6 +418,8 @@ class DatabaseHelper:
 
     def save_issue(self, record: IssueRecord):
         with self._get_conn() as conn:
+            if not record.id:
+                record.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM issued_books").fetchone()[0]
             conn.execute("""
                 INSERT INTO issued_books (
                     syncId, id, bookId, bookTitle, bookIsbn, memberId, memberName,
@@ -425,6 +448,8 @@ class DatabaseHelper:
 
     def save_reservation(self, res: Reservation):
         with self._get_conn() as conn:
+            if not res.id:
+                res.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM reservations").fetchone()[0]
             conn.execute("""
                 INSERT INTO reservations (
                     syncId, id, bookId, bookTitle, memberId, memberName, reservedDate,
@@ -760,3 +785,82 @@ class DatabaseHelper:
             results["expired_members_with_books"] = [dict(r) for r in expired_active]
 
         return results
+
+    # ── Sample Data (for trying the app before real records exist) ────────────
+    def seed_sample_data(self):
+        """Insert a small set of realistic sample books, members, and one active
+        issue so a brand-new install isn't empty. Safe to call multiple times —
+        each call adds a fresh batch (use reset_all_data() first to start clean)."""
+        import datetime
+        import time as _time
+
+        sample_books = [
+            ("A Brief History of Time", "Stephen Hawking", "Bantam", "Science"),
+            ("To Kill a Mockingbird", "Harper Lee", "J. B. Lippincott", "Fiction"),
+            ("Introduction to Algorithms", "Cormen, Leiserson, Rivest", "MIT Press", "Computer Science"),
+            ("The Diary of a Young Girl", "Anne Frank", "Contact Publishing", "History"),
+            ("Sapiens", "Yuval Noah Harari", "Harvill Secker", "History"),
+            ("Clean Code", "Robert C. Martin", "Prentice Hall", "Computer Science"),
+            ("Pride and Prejudice", "Jane Austen", "T. Egerton", "English Literature"),
+            ("Cosmos", "Carl Sagan", "Random House", "Science"),
+        ]
+        saved_books = []
+        for i, (title, author, publisher, category) in enumerate(sample_books):
+            book = Book(
+                accNo=f"ACC-{1000 + i}", title=title, author=author,
+                publisher=publisher, category=category, status="Available",
+                price=500.0 + i * 50,
+            )
+            self.save_book(book)
+            saved_books.append(book)
+
+        sample_members = [
+            ("Ali Khan", "10A", "Student"),
+            ("Sara Ahmed", "10B", "Student"),
+            ("Bilal Hussain", "9A", "Student"),
+            ("Ayesha Malik", "Staff Room", "Faculty"),
+            ("Usman Tariq", "9B", "Student"),
+        ]
+        saved_members = []
+        today = datetime.date.today()
+        for i, (name, className, mtype) in enumerate(sample_members):
+            member = Member(
+                memberId=f"MEM-{2000 + i}", name=name, className=className,
+                memberType=mtype, joinDate=today.isoformat(),
+                expiryDate=(today.replace(year=today.year + 1)).isoformat(),
+                pin=f"{1000 + i}",
+            )
+            self.save_member(member)
+            saved_members.append(member)
+
+        # Issue a couple of books so the dashboard shows real activity.
+        for book, member in list(zip(saved_books, saved_members))[:2]:
+            book.status = "Issued"
+            book.lastUpdated = int(_time.time() * 1000)
+            self.save_book(book)
+            member.booksIssued += 1
+            self.save_member(member)
+            record = IssueRecord(
+                bookId=book.id, bookTitle=book.title, bookIsbn=book.isbn,
+                memberId=member.id, memberName=member.name, memberMemberId=member.memberId,
+                issueDate=today.isoformat(),
+                dueDate=(today + datetime.timedelta(days=14)).isoformat(),
+                status="Issued",
+            )
+            self.save_issue(record)
+
+        self.log_audit_local("system", "seed_data", f"Seeded {len(saved_books)} books and {len(saved_members)} members")
+
+    def reset_all_data(self):
+        """Wipe all library data (books, members, issues, reservations, and
+        every feature table) while keeping the school profile and staff
+        accounts intact, so nobody gets locked out of their own app."""
+        tables = [
+            "books", "members", "issued_books", "reservations", "book_reviews",
+            "audit_log", "backup_history", "inventory_audits", "fine_payments",
+            "serials", "ill_requests", "purchase_orders",
+        ]
+        with self._get_conn() as conn:
+            for table in tables:
+                conn.execute(f"DELETE FROM {table}")
+            conn.commit()

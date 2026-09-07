@@ -63,6 +63,7 @@ class Book:
     def from_dict(d: dict) -> "Book":
         return Book(
             syncId=d.get("syncId", ""),
+            id=int(d.get("id", 0) or 0),
             isbn=d.get("isbn", ""),
             accNo=d.get("accNo", ""),
             title=d.get("title", ""),

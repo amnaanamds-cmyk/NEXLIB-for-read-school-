@@ -471,11 +471,32 @@ class IssueReturnScreen(QWidget):
             QMessageBox.information(self, "Renewed", f"✅  Book renewed! New Due Date: {issue.dueDate}")
 
     def _send_reminder(self):
+        import webbrowser
+        from urllib.parse import quote
         row = self.active_table.currentRow()
         if row < 0 or row >= len(self._issues):
             QMessageBox.information(self, "Select", "Select an active issue to remind."); return
         issue = self._issues[row]
-        QMessageBox.information(self, "Reminder Sent", f"📧 Mock: Automated email/SMS reminder sent to {issue.memberName}!")
+
+        members = [m for m in self.db.get_members() if m.id == issue.memberId]
+        phone = members[0].phone if members else ""
+        days_left = days_diff(issue.dueDate)
+        status = f"is now {abs(days_left)} day(s) overdue" if days_left < 0 else f"is due in {days_left} day(s)"
+        msg = (
+            f"Dear {issue.memberName}, this is a friendly reminder from {self.db.get_school_name()}. "
+            f"'{issue.bookTitle}' {status} ({issue.dueDate}). Please return it at your earliest convenience. Thank you!"
+        )
+
+        if not phone:
+            QMessageBox.information(self, "No Phone Number",
+                f"{issue.memberName} has no phone number on file, so a WhatsApp reminder can't be sent.\n\n"
+                f"Message that would be sent:\n\n{msg}")
+            return
+
+        clean_phone = phone.replace("+", "").replace("-", "").replace(" ", "")
+        wa_url = f"https://wa.me/{clean_phone}?text={quote(msg)}"
+        webbrowser.open(wa_url)
+        QMessageBox.information(self, "Reminder", f"Opened WhatsApp with a pre-filled reminder for {issue.memberName}.")
 
 
     def _print_receipt(self):

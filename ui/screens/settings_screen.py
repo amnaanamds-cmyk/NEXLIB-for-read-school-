@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFormLayout, QDoubleSpinBox, QMessageBox, QFrame, QTabWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox,
-    QCheckBox, QDialog, QTextEdit, QFileDialog, QInputDialog, QLineEdit
+    QDialog, QTextEdit, QFileDialog, QInputDialog, QLineEdit
 )
 from PyQt6.QtCore import Qt
 import json
@@ -57,18 +57,12 @@ class SettingsScreen(QWidget):
         save_btn.setStyleSheet("background: #1E5FD4; color: white; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 700; font-size: 14px; margin-top: 20px;")
         save_btn.clicked.connect(self._save)
 
-        # UI Preferences Mock (7.1, 7.2, 7.3)
-        ui_lbl = QLabel("UI Preferences (Applies immediately or on restart)")
+        # UI Preferences
+        ui_lbl = QLabel("UI Preferences (applies immediately)")
         ui_lbl.setStyleSheet("color: #E8EEF8; font-size: 16px; font-weight: bold; margin-top: 20px;")
         gen_lay.addWidget(ui_lbl)
 
         ui_form = QFormLayout()
-        
-        self.lang_cb = QComboBox()
-        self.lang_cb.addItems(["English", "Hindi"])
-        self.lang_cb.currentTextChanged.connect(self._toggle_lang)
-        self.lang_cb.setStyleSheet(self.fine_spin.styleSheet())
-        ui_form.addRow("Language (English/Hindi)", self.lang_cb)
 
         self.theme_cb = QComboBox()
         self.theme_cb.addItems(["Dark Mode", "Light Mode"])
@@ -119,48 +113,55 @@ class SettingsScreen(QWidget):
         audit_lay.addWidget(self.audit_table)
         self.tabs.addTab(audit_tab, "Audit Logs")
 
-        # 4. Developer Tools Tab (8.1, 8.2, 8.3)
+        # 4. Data & Backup Tab
         dev_tab = QWidget()
         dev_lay = QVBoxLayout(dev_tab)
-        
-        share_btn = QPushButton("📤 Share App / APK Extraction Tool")
-        share_btn.setStyleSheet(save_btn.styleSheet())
-        share_btn.clicked.connect(self._share_apk)
-        dev_lay.addWidget(share_btn)
-        
-        seed_btn = QPushButton("🌱 Seed Sample Data")
+
+        dev_lay.addWidget(QLabel(
+            "🟢  Automatic daily backups are running in the background.",
+            styleSheet="color:#10B981;font-size:13px;font-weight:bold;"
+        ))
+
+        seed_btn = QPushButton("🌱 Seed Sample Data (for trying the app)")
         seed_btn.setStyleSheet(save_btn.styleSheet())
         seed_btn.clicked.connect(self._seed_data)
         dev_lay.addWidget(seed_btn)
-        
-        reset_btn = QPushButton("⚠️ Reset Database")
+
+        reset_btn = QPushButton("⚠️ Reset All Library Data")
         reset_btn.setStyleSheet("background: #DC2626; color: white; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 700; font-size: 14px; margin-top: 20px;")
         reset_btn.clicked.connect(self._reset_db)
         dev_lay.addWidget(reset_btn)
 
-        # Advanced Backup & Security (User Requested)
+        # Backup & Restore
+        backup_lbl = QLabel("Backup & Restore")
+        backup_lbl.setStyleSheet("color: #E8EEF8; font-size: 16px; font-weight: bold; margin-top: 20px;")
+        dev_lay.addWidget(backup_lbl)
+
         backup_lay = QHBoxLayout()
-        zip_btn = QPushButton("🗄️ 1-Click Encrypted ZIP Backup")
-        zip_btn.setStyleSheet("background: #7C3AED; color: white; border-radius: 8px; padding: 10px; font-weight: bold;")
-        zip_btn.clicked.connect(self._create_zip_backup)
-        backup_lay.addWidget(zip_btn)
-        
-        auto_bkp = QCheckBox("Enable Automated Daily Backups")
-        auto_bkp.setStyleSheet("color: #E8EEF8; font-weight: bold;")
-        auto_bkp.setChecked(True)
-        backup_lay.addWidget(auto_bkp)
+        now_btn = QPushButton("💾 Backup Now")
+        now_btn.setStyleSheet("background: #1E5FD4; color: white; border-radius: 8px; padding: 10px; font-weight: bold;")
+        now_btn.clicked.connect(self._backup_now)
+        backup_lay.addWidget(now_btn)
+
+        history_btn = QPushButton("📜 Backup History")
+        history_btn.setStyleSheet("background: #1E3050; color: #A0B4CC; border: 1px solid #1E3050; border-radius: 8px; padding: 10px; font-weight: bold;")
+        history_btn.clicked.connect(self._view_backup_history)
+        backup_lay.addWidget(history_btn)
+
+        restore_btn = QPushButton("♻️ Restore from Backup")
+        restore_btn.setStyleSheet("background: #F59E0B; color: #0D1B2A; border-radius: 8px; padding: 10px; font-weight: bold;")
+        restore_btn.clicked.connect(self._restore_backup)
+        backup_lay.addWidget(restore_btn)
         dev_lay.addLayout(backup_lay)
 
-        sec_lay = QHBoxLayout()
-        app_lock = QPushButton("🔒 Set Idle App Lock PIN")
-        app_lock.setStyleSheet("background: #EF4444; color: white; border-radius: 8px; padding: 10px; font-weight: bold;")
-        app_lock.clicked.connect(self._set_app_lock)
-        sec_lay.addWidget(app_lock)
-        dev_lay.addLayout(sec_lay)
+        zip_btn = QPushButton("📦 Export Portable Backup (.zip)")
+        zip_btn.setStyleSheet("background: #7C3AED; color: white; border-radius: 8px; padding: 10px; font-weight: bold; margin-top: 8px;")
+        zip_btn.clicked.connect(self._export_portable_zip)
+        dev_lay.addWidget(zip_btn)
 
         # Feature 4: CSV/Excel Full Data Export
         export_btn = QPushButton("📊 Export Full Database (CSV Backup)")
-        export_btn.setStyleSheet("background: #059669; color: white; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 700; font-size: 14px; margin-top: 10px;")
+        export_btn.setStyleSheet("background: #059669; color: white; border: none; border-radius: 8px; padding: 10px 24px; font-weight: 700; font-size: 14px; margin-top: 20px;")
         export_btn.clicked.connect(self._export_full_db)
         dev_lay.addWidget(export_btn)
 
@@ -170,7 +171,7 @@ class SettingsScreen(QWidget):
         dev_lay.addWidget(health_btn)
 
         dev_lay.addStretch()
-        self.tabs.addTab(dev_tab, "Developer Tools")
+        self.tabs.addTab(dev_tab, "Data & Backup")
 
         layout.addWidget(self.tabs)
         self._init_done = True
@@ -390,10 +391,6 @@ class SettingsScreen(QWidget):
         except Exception as e:
             print(f"Error loading audit logs: {e}")
 
-    def _toggle_lang(self, lang):
-        if hasattr(self, '_init_done'):
-            QMessageBox.information(self, "Language Live Toggle", f"Mock: Interface translating to {lang}...")
-            
     def _toggle_theme(self, theme_text):
         if hasattr(self, '_init_done'):
             main_window = self.window()
@@ -401,58 +398,107 @@ class SettingsScreen(QWidget):
                 main_window.is_dark = "Dark" in theme_text
                 main_window._apply_theme()
                 main_window.theme_btn.setText("☀️  Light Mode" if main_window.is_dark else "🌙  Dark Mode")
-            
+
     def _toggle_font(self, scale):
         if hasattr(self, '_init_done'):
-            QMessageBox.information(self, "Font Scaling", f"Mock: Accessibility Font Scale adjusted to {scale}x.")
-
-    def _share_apk(self):
-        QMessageBox.information(self, "Share App", "Mock: Extracted a shareable app package to Desktop.")
+            from PyQt6.QtWidgets import QApplication
+            from PyQt6.QtGui import QFont
+            font = QFont("Segoe UI", round(10 * scale))
+            QApplication.instance().setFont(font)
 
     def _seed_data(self):
-        reply = QMessageBox.question(self, "Seed Data", "Insert sample mock data into the database?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(self, "Seed Sample Data",
+            "This adds a handful of sample books, members, and one active issue so you "
+            "can try the app before entering real records. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            QMessageBox.information(self, "Seeded", "Mock: Sample books, members, and transactions seeded.")
+            try:
+                self.db.seed_sample_data()
+                QMessageBox.information(self, "Seeded", "Sample books, members, and an issued book were added.")
+                self.window().navigate_to(self.window().current_screen) if hasattr(self.window(), "navigate_to") else None
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to seed sample data: {e}")
 
     def _reset_db(self):
-        reply = QMessageBox.question(self, "Reset Database", "WARNING: This will clear all local data. Proceed?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            QMessageBox.information(self, "Database Reset", "Mock: Database reset successfully.")
+        reply = QMessageBox.question(self, "Reset All Library Data",
+            "⚠ This permanently deletes ALL books, members, issue records, and every "
+            "other library record. Your school profile and staff logins are kept. "
+            "This cannot be undone. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        confirm, ok = QInputDialog.getText(self, "Confirm Reset", "Type RESET to confirm:")
+        if not ok or confirm.strip().upper() != "RESET":
+            return
+        try:
+            self.db.reset_all_data()
+            email = self.auth.current_user.email if self.auth.current_user else ""
+            self.db.log_audit_local(email, "database_reset", "All library data reset by user")
+            QMessageBox.information(self, "Reset Complete", "All library data has been cleared.")
+            self.refresh()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Reset failed: {e}")
 
     def _export_full_db(self):
-        from PyQt6.QtWidgets import QFileDialog
-        QMessageBox.information(self, "Export", "Mock: Full database exported to CSV.")
-        
-    def _create_zip_backup(self):
-        import shutil, time
-        from PyQt6.QtWidgets import QFileDialog
-
-        backup_name = f"Library_Backup_{time.strftime('%Y%m%d_%H%M%S')}.zip"
-        path, _ = QFileDialog.getSaveFileName(self, "Save Backup", backup_name, "ZIP Archives (*.zip)")
-        if path:
-            try:
-                shutil.copy2(self.db.db_path, path)
-                QMessageBox.information(self, "Backup Success", f"Database backed up to:\n{path}")
-            except Exception as e:
-                QMessageBox.critical(self, "Backup Failed", f"Failed to create backup: {e}")
-
-    def _set_app_lock(self):
-        from PyQt6.QtWidgets import QInputDialog, QLineEdit
-        pin, ok = QInputDialog.getText(self, "App Lock", "Enter new 4-digit PIN for Idle Lock:", QLineEdit.EchoMode.Password)
-        if ok and len(pin) >= 4:
-            QMessageBox.information(self, "App Lock", "Idle App Lock PIN set successfully. App will lock after 15 mins of inactivity.")
-        elif ok:
-            QMessageBox.warning(self, "Error", "PIN must be at least 4 digits.")
         from services.advanced_service import AdvancedService
-
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder for CSV Backup")
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder for CSV Export")
         if not folder:
             return
-
         try:
             adv = AdvancedService(self.db)
             adv.export_full_database_csv(folder)
-            QMessageBox.information(self, "Success", f"Full database backup exported to:\n{folder}")
+            QMessageBox.information(self, "Success", f"Full database exported as CSV files to:\n{folder}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Export failed: {e}")
+
+    def _backup_now(self):
+        from services.backup_service import BackupService
+        try:
+            path = BackupService(self.db).do_backup(backup_type="manual")
+            QMessageBox.information(self, "Backup Complete", f"Backup saved to:\n{path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Backup failed: {e}")
+
+    def _view_backup_history(self):
+        history = self.db.get_backup_history()
+        if not history:
+            QMessageBox.information(self, "Backup History", "No backups yet. Use 'Backup Now' to create one.")
+            return
+        lines = [f"{h['created_at_str']}  •  {h['backup_type']}  •  {h['file_size'] / 1024:.0f} KB\n{h['backup_path']}"
+                 for h in history]
+        QMessageBox.information(self, "Backup History", "\n\n".join(lines))
+
+    def _restore_backup(self):
+        from services.backup_service import BackupService, BACKUP_DIR
+        path, _ = QFileDialog.getOpenFileName(self, "Select Backup File", str(BACKUP_DIR), "SQLite Database (*.db)")
+        if not path:
+            return
+        reply = QMessageBox.question(self, "Restore Backup",
+            "This will replace your current data with the selected backup. "
+            "Restart the app afterwards. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            BackupService(self.db).restore_from_backup(path)
+            QMessageBox.information(self, "Restore Complete", "Backup restored. Please restart the app now.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Restore failed: {e}")
+
+    def _export_portable_zip(self):
+        from services.backup_service import BackupService
+        import time
+        default_name = f"NexLib_Backup_{time.strftime('%Y%m%d_%H%M%S')}.zip"
+        path, _ = QFileDialog.getSaveFileName(self, "Export Portable Backup", default_name, "ZIP Archives (*.zip)")
+        if not path:
+            return
+        try:
+            saved_path = BackupService(self.db).export_full_backup_zip(path)
+            QMessageBox.information(self, "Export Complete",
+                f"Portable backup saved to:\n{saved_path}\n\n"
+                "Copy this file to move your library to another computer.")
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Export failed: {e}")
 
