@@ -150,8 +150,10 @@ class MainWindow(QMainWindow):
         divider.setStyleSheet("background: #1E3050; margin: 8px 0;")
         sb_layout.addWidget(divider)
 
-        # Nav buttons
+        # Nav buttons — Settings is admin-only (staff account management, data reset/restore)
         for icon, label, key in self.NAV_ITEMS:
+            if key == "settings" and not self.auth.can_access_settings():
+                continue
             btn = NavButton(icon, label)
             btn.clicked.connect(lambda _, k=key: self.navigate_to(k))
             self._nav_btns[key] = btn
@@ -235,6 +237,8 @@ class MainWindow(QMainWindow):
     # ── Navigation ────────────────────────────────────────────────────────────
     def navigate_to(self, key: str):
         if key not in self._scroll_areas:
+            return
+        if key == "settings" and not self.auth.can_access_settings():
             return
 
         self.current_screen = key

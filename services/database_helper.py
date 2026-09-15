@@ -4,6 +4,7 @@ Fully offline storage for Books, Members, Issue Records, Reservations,
 staff accounts, and the school profile.
 """
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -32,6 +33,9 @@ class DatabaseHelper:
         db_path = Path(config.LOCAL_DB_PATH)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = str(db_path)
+        # Serializes "assign the next local id" so two background save
+        # workers can never read the same MAX(id) before either commits.
+        self._id_lock = threading.Lock()
         self._init_db()
 
     def _get_conn(self):
@@ -339,7 +343,7 @@ class DatabaseHelper:
 
     def save_book(self, book: Book):
         """Save (insert or update) a book locally. Assigns a unique local id on first save."""
-        with self._get_conn() as conn:
+        with self._id_lock, self._get_conn() as conn:
             if not book.id:
                 book.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM books").fetchone()[0]
             conn.execute("""
@@ -382,7 +386,7 @@ class DatabaseHelper:
 
     def save_member(self, member: Member):
         """Save (insert or update) a member locally. Assigns a unique local id on first save."""
-        with self._get_conn() as conn:
+        with self._id_lock, self._get_conn() as conn:
             if not member.id:
                 member.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM members").fetchone()[0]
             conn.execute("""
@@ -417,7 +421,7 @@ class DatabaseHelper:
             return [IssueRecord.from_dict(dict(r)) for r in rows]
 
     def save_issue(self, record: IssueRecord):
-        with self._get_conn() as conn:
+        with self._id_lock, self._get_conn() as conn:
             if not record.id:
                 record.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM issued_books").fetchone()[0]
             conn.execute("""
@@ -447,7 +451,7 @@ class DatabaseHelper:
             return [Reservation.from_dict(dict(r)) for r in rows]
 
     def save_reservation(self, res: Reservation):
-        with self._get_conn() as conn:
+        with self._id_lock, self._get_conn() as conn:
             if not res.id:
                 res.id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM reservations").fetchone()[0]
             conn.execute("""
