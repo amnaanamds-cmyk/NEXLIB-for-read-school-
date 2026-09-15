@@ -8,10 +8,10 @@ pip install -r requirements.txt
 pip install pyinstaller
 echo.
 echo Building the executable...
-python -m PyInstaller --noconfirm --clean --name NexLib --icon assets\nexlib.ico --windowed main.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name NexLib --icon assets\nexlib.ico main.py
 echo.
 echo ========================================================
 echo   Build Complete!
-echo   Your .exe file is located in the 'dist' folder.
+echo   Your NexLib.exe file is located in the 'dist' folder.
 echo ========================================================
 pause
